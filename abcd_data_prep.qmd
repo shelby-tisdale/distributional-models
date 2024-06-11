@@ -19,9 +19,13 @@ library(reshape2)
 
 # location of Box data directory
 # for Shelby
-data_dir <- 'C:/Users/queen/Box/ABCD Tabulated Data/5.1/core/'
+#data_dir <- 'C:/Users/queen/Box/ABCD Tabulated Data/5.1/core/'
+
+# for Nichole
+data_dir <- "/Users/nicholezhang/Library/CloudStorage/Box-Box/ABCD Tabulated Data/5.1/core"
+
 setwd(data_dir)
-# for Nicole
+
 # data_dir <- NULL
 
 
@@ -61,7 +65,7 @@ dat.mri.area = read.csv('imaging/mri_y_smr_area_dst.csv')
 #| label: select-relevant-vars
 
 demog_long <- demog |>
-  select(src_subject_id, starts_with("demo_race_a_p___")) |>
+  select(src_subject_id, starts_with("demo_race_a_p___"), starts_with("demo_ethn")) |>
   # pivot race variables
   pivot_longer(cols = starts_with("demo_race_a_p___"),
                names_to = "race",
@@ -92,9 +96,37 @@ demog_long <- demog |>
   distinct() |>
   select(-is_race) |>
   group_by(src_subject_id) |>
-  mutate(order = row_number())
+  mutate(order = row_number()) |> 
+  
+  #clean hispanic origin variable 
+  mutate(hispanic_origin = case_when( 
+    demo_ethn2_v2 == 10 ~ "Puerto Rican", 
+    demo_ethn2_v2 == 12 ~ "Dominican",
+    demo_ethn2_v2 == 13 ~ "Mexican", 
+    demo_ethn2_v2 == 14 ~ "Mexican American", 
+    demo_ethn2_v2 == 15 ~ "Chicano", 
+    demo_ethn2_v2 == 18 ~ "Cuban", 
+    demo_ethn2_v2 == 19 ~ "Cuban American", 
+    demo_ethn2_v2 == 20 ~ "Central or South American", 
+    demo_ethn2_v2 == 40 ~ "Other Latin American origin", 
+    demo_ethn2_v2 == 41 ~ "Other Hispanic", 
+    demo_ethn2_v2 %in% c(777, 999) ~ "NA"
+    ))
+
+
+
 
 # reformat wide
 demog_wide <- demog_long |>
-  pivot_wider(names_from = order, values_from = race, names_prefix = "race_")
+  pivot_wider(names_from = order, values_from = race, names_prefix = "race_") |> 
+  select(-demo_ethn2_v2)
+
+
+#clean age variable 
+demog <- demog |> 
+  mutate(age_clean = trunc(demo_brthdat_v2)) #remove decimals 
+
 ```
+
+
+
