@@ -1,0 +1,75 @@
+---
+title: "Recreating Lifespan Brainchart Code"
+format: html
+---
+
+```{r}
+#| label: load-packages
+#| warning: false
+
+library(gamlss)
+
+```
+
+
+```{r}
+bfpNA <- function (x, powers = c(1, 2), shift = 0, scale = 1) ## have change gamlss:bfp() defaults, now fix shift=0 and scale=1 [DATA DEPENDENT SCALING IS BAD!]
+{
+    ## fp.scale <- function(x) {
+    ##     if( all(is.na(x)) ) {stop("All NAs makes no sense")}
+    ##     if (min(x,na.rm=TRUE) <= 0) {
+    ##         xx <- na.omit(x)
+    ##         z <- sort(xx)[-1] - sort(xx)[-length(xx)]
+    ##         shift <- min(z[z > 0]) - min(xx)
+    ##     }
+    ##     else shift <- 0
+    ##     range <- max(x,na.rm=TRUE) - min(x,na.rm=TRUE)
+    ##     scale <- 10^(sign(log10(range)) * trunc(abs(log10(range))))
+    ##     list(shift = shift, scale = scale)
+    ## }
+    nobs <- length(x)
+    npoly <- length(powers)
+    X <- matrix(0, nrow = nobs, ncol = npoly)
+    if (is.null(scale) | is.null(shift)) {
+        stop("WARNING: Using automatic scale/shift will invalidate future refitting")
+        out <- fp.scale(x)
+        shift <- out$shift
+        scale <- out$scale
+    }
+    ## x <- x + shift ## ASSUME variable is validly scaled and shifted!
+    ## x <- x/scale
+    x1 <- ifelse(powers[1] != rep(0, nobs), x^powers[1], log(x))
+    X[, 1] <- x1
+    if (npoly >= 2) {
+        for (i in 2:npoly) {
+            if (powers[i] == powers[(i - 1)]) 
+                x2 <- log(x) * x1
+            else x2 <- ifelse(powers[i] != rep(0, nobs), x^powers[i], 
+                log(x))
+            X[, i] <- x2
+            x1 <- x2
+        }
+    }
+    X
+}
+
+##
+## bfp() := the in-built gamlss function cannot handle NAs
+##          we replace the in-built with a warning, to make sure we do not accidentally use the 'broken' version
+bfp <- function( ... ) {stop("Default bfp() function cannot handle NAs. We have masked with this fatal error. Use bfpNA() instead. ")}
+
+## never mind this is a lot more complicated than i thought it would be :( shelby come back 
+```
+
+
+
+
+```{r}
+
+```
+
+
+
+
+
+
