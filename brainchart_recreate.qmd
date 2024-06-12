@@ -8,11 +8,18 @@ format: html
 #| warning: false
 
 library(gamlss)
+library(ggseg)
+library(ggplot2)
+library(forcats)
+library(dplyr)
+library(tidyverse)
 
 ```
 
 
 ```{r}
+
+
 bfpNA <- function (x, powers = c(1, 2), shift = 0, scale = 1) ## have change gamlss:bfp() defaults, now fix shift=0 and scale=1 [DATA DEPENDENT SCALING IS BAD!]
 {
     ## fp.scale <- function(x) {
@@ -65,8 +72,68 @@ bfp <- function( ... ) {stop("Default bfp() function cannot handle NAs. We have 
 
 
 ```{r}
+#| label: MRI-data-cleaning
+#| warning: false
+#looking at MRI data 
+
+ggplot() +
+  geom_brain(atlas = dk, position = position_brain(hemi ~ side))
+
+
+
+#what do the first couple columns of thickness data look like  
+dat.mri |> 
+  select(src_subject_id, eventname, smri_thick_cdk_banksstslh,
+         smri_thick_cdk_cdacatelh, smri_thick_cdk_cdmdfrlh, 
+         smri_thick_cdk_cuneuslh, smri_thick_cdk_ehinallh) |>
+  group_by(eventname) |> 
+  mutate(eventname = factor(eventname)) |>
+  mutate(eventname = fct_relevel(eventname, 
+                                 c("baseline_year_1_arm_1", 
+                                   "2_year_follow_up_y_arm_1", 
+                                   "4_year_follow_up_y_arm_1"))) |>
+  pivot_longer(cols = c(smri_thick_cdk_banksstslh:smri_thick_cdk_ehinallh), 
+               names_to = "brain_morphology", 
+               values_to = "thickness_mm") |>
+  ggplot(aes(x = eventname, y = thickness_mm, color = brain_morphology)) + 
+  geom_boxplot() 
+
+
+
+#trying to make df that is one row for each subject so that we can join with demog data
+# with columns for each timepoint and morphology measure 
+
+braintest <- dat.mri |> 
+  select(src_subject_id:smri_thick_cdk_ehinallh) |> 
+  pivot_longer(cols = starts_with("smri_thick_cdk_"), 
+                                  names_to = "morphology_measure", 
+                                  values_to = "value") |> 
+  mutate(eventname = factor(eventname)) |> 
+  mutate(eventname = fct_recode(eventname, 
+                                baseline = "baseline_year_1_arm_1",
+                                year2 = "2_year_follow_up_y_arm_1", 
+                                year4 = "4_year_follow_up_y_arm_1")) |> 
+  mutate(event_val = paste(eventname, morphology_measure, sep = "_")) |> 
+  select(-morphology_measure) |> 
+  pivot_wider(names_from = event_val, values_from = value)
+  
+
+
+# for some reason I can't figure out how to get one row per subject it is still splitting up by timepoint
+# climbing brain break!! 
+
+
+               
+
+
+
+
+
 
 ```
+
+
+
 
 
 

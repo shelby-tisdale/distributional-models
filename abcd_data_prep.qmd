@@ -114,8 +114,6 @@ demog_long <- demog |>
     ))
 
 
-
-
 # reformat wide
 demog_wide <- demog_long |>
   pivot_wider(names_from = order, values_from = race, names_prefix = "race_") |> 
@@ -126,7 +124,11 @@ demog_wide <- demog_long |>
 demog <- demog |> 
   mutate(age_clean = trunc(demo_brthdat_v2)) #remove decimals 
 
+
+
 ```
+
+
 
 
 
