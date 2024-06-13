@@ -19,10 +19,10 @@ library(reshape2)
 
 # location of Box data directory
 # for Shelby
-#data_dir <- 'C:/Users/queen/Box/ABCD Tabulated Data/5.1/core/'
+data_dir <- 'C:/Users/queen/Box/ABCD Tabulated Data/5.1/core/'
 
 # for Nichole
-data_dir <- "/Users/nicholezhang/Library/CloudStorage/Box-Box/ABCD Tabulated Data/5.1/core"
+# data_dir <- "/Users/nicholezhang/Library/CloudStorage/Box-Box/ABCD Tabulated Data/5.1/core"
 
 setwd(data_dir)
 
@@ -65,7 +65,29 @@ dat.mri.area = read.csv('imaging/mri_y_smr_area_dst.csv')
 #| label: select-relevant-vars
 
 demog_long <- demog |>
-  select(src_subject_id, starts_with("demo_race_a_p___"), starts_with("demo_ethn")) |>
+  # select relevant variables
+   select(
+     src_subject_id,
+     eventname,
+     starts_with("demo_brthdat_v2"),
+     demo_sex_v2,
+     starts_with("demo_gender_id_v2"),
+     starts_with("demo_race_a_p___"),
+     starts_with("demo_ethn"),
+     demo_prnt_years_us_v2,
+     starts_with("demo_prnt_marital_v2"),
+     starts_with("demo_prnt_ed_v2"),
+     starts_with("demo_prnt_income_v2"),
+     starts_with("demo_prnt_prtnr_v2"),
+     starts_with("demo_prnt_prtnr_bio"),
+     starts_with("demo_prnt_prtnr_adopt"),
+     starts_with("demo_prtnr_ed_v2"),
+     starts_with("demo_prtnr_income_v2"),
+     starts_with("demo_comb_income_v2"),
+     starts_with("demo_med_insur"),
+     race_ethnicity,
+     acs_raked_propensity_score
+     ) |>
   # pivot race variables
   pivot_longer(cols = starts_with("demo_race_a_p___"),
                names_to = "race",
@@ -96,39 +118,33 @@ demog_long <- demog |>
   distinct() |>
   select(-is_race) |>
   group_by(src_subject_id) |>
-  mutate(order = row_number()) |> 
-  
-  #clean hispanic origin variable 
-  mutate(hispanic_origin = case_when( 
-    demo_ethn2_v2 == 10 ~ "Puerto Rican", 
-    demo_ethn2_v2 == 12 ~ "Dominican",
-    demo_ethn2_v2 == 13 ~ "Mexican", 
-    demo_ethn2_v2 == 14 ~ "Mexican American", 
-    demo_ethn2_v2 == 15 ~ "Chicano", 
-    demo_ethn2_v2 == 18 ~ "Cuban", 
-    demo_ethn2_v2 == 19 ~ "Cuban American", 
-    demo_ethn2_v2 == 20 ~ "Central or South American", 
-    demo_ethn2_v2 == 40 ~ "Other Latin American origin", 
-    demo_ethn2_v2 == 41 ~ "Other Hispanic", 
-    demo_ethn2_v2 %in% c(777, 999) ~ "NA"
-    ))
+  mutate(order = row_number())
 
-
-# reformat wide
+# reformat wide and continue cleaning
 demog_wide <- demog_long |>
-  pivot_wider(names_from = order, values_from = race, names_prefix = "race_") |> 
-  select(-demo_ethn2_v2)
-
-
-#clean age variable 
-demog <- demog |> 
-  mutate(age_clean = trunc(demo_brthdat_v2)) #remove decimals 
-
-
-
+  pivot_wider(names_from = order, values_from = race, names_prefix = "race_") |>
+  #clean hispanic origin variable 
+  mutate(
+    hispanic_origin = case_match(
+      demo_ethn_v2,
+      1 ~ 1,
+      2 ~ 0,
+      .default = NA),
+    hispanic_origin_spec = case_match(
+    demo_ethn2_v2, 
+    10 ~ "Puerto Rican", 
+    12 ~ "Dominican",
+    13 ~ "Mexican", 
+    14 ~ "Mexican American", 
+    15 ~ "Chicano", 
+    18 ~ "Cuban", 
+    19 ~ "Cuban American", 
+    20 ~ "Central or South American", 
+    40 ~ "Other Latin American origin", 
+    41 ~ "Other Hispanic", 
+    .default = NA),
+    # clean age variable
+    age = trunc(demo_brthdat_v2) # remove decimals 
+    ) |>
+  select(-starts_with("demo_ethn"))
 ```
-
-
-
-
-
