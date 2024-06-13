@@ -52,7 +52,7 @@ if(!is.null(data_dir)){
 
 # LOAD DATA
 # Demographic variables and propensity weights
-demog <- read.csv("abcd-general/abcd_p_demo.csv")
+demog <- read.csv("abcd-general/abcd_p_demo.csv", na.strings = c(999, 777))
 # Age in months, Site ID (ABCD Study Design Variables), Family ID
 study_covars <- read.csv("abcd-general/abcd_y_lt.csv")
 # desikan atlas, cortical thickness
@@ -150,8 +150,18 @@ demog_baseline_wide <- demog_baseline_long |>
     20 ~ "Central or South American", 
     40 ~ "Other Latin American origin", 
     41 ~ "Other Hispanic", 
-    .default = NA)) |>
-  select(src_subject_id, race_1:race_5, hispanic_origin, hispanic_origin_spec)
+    .default = NA),
+    sex = factor(demo_sex_v2),
+    sex = fct_recode(
+      sex,
+      "Male" = "1",
+      "Female" = "2",
+      "Intersex-Male" = "3"
+    )) |>
+  rename(
+    parent_years_us_baseline = demo_prnt_years_us_v2
+  ) |>
+  select(src_subject_id, race_1:race_5, hispanic_origin, hispanic_origin_spec, sex, parent_years_us_baseline)
 
 demog_clean <- demog_clean |>
  mutate(
@@ -160,13 +170,121 @@ demog_clean <- demog_clean |>
       eventname == "baseline_year_1_arm_1" ~ trunc(demo_brthdat_v2), # remove decimals 
       eventname %in% c(
         "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
-        ) ~ trunc(demo_brthdat_v2_l)
-    )) |>
-  select(-starts_with("demo_ethn"), -starts_with("demo_race"), -starts_with("demo_brthdat")) |>
+        ) ~ trunc(demo_brthdat_v2_l)),
+    gender_id = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_gender_id_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_gender_id_v2_l),
+    gender_id = case_match(
+      gender_id,
+      1 ~ "Male",
+      2 ~ "Female",
+      3 ~ "Trans male",
+      4 ~ "Trans female",
+      5 ~ "Genderqueer",
+      6 ~ "Other"
+    ),
+    parent_marital_status = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_marital_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_marital_v2_l
+    ),
+    parent_marital_status = case_match(
+      parent_marital_status,
+      1 ~ "Married",
+      2 ~ "Widowed",
+      3 ~ "Divorced",
+      4 ~ "Separated",
+      5 ~ "Never Married",
+      6 ~ "Living with Partner"),
+    parent_ed = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_ed_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_ed_v2_2yr_l
+    ),
+    parent_ed = case_match(
+      parent_ed,
+      0 ~ "Never attended / Kindergarten",
+      1 ~ "1st Grade",
+      2 ~ "2nd Grade",
+      3 ~ "3rd Grade",
+      4 ~ "4th Grade",
+      5 ~ "5th Grade",
+      6 ~ "6th Grade",
+      7 ~ "7th Grade",
+      8 ~ "8th Grade",
+      9 ~ "9th Grade",
+      10 ~ "10th Grade",
+      11 ~ "11th Grade",
+      12 ~ "12th Grade - No Diploma",
+      13 ~ "High School Graduate",
+      14 ~ "GED or Equivalent",
+      16 ~ "Associate Degree: Occupational, Technical or Vocational",
+      17 ~ "Associate Degree: Academic Program",
+      18 ~ "Bachelor's Degree",
+      19 ~ "Master's Degree",
+      20 ~ "Professional School Degree",
+      21 ~ "Doctoral Degree",
+      22 ~ "Less than 1 year of college",
+      23 ~ "One year or more of college credit - no degree"
+    ),
+    parent_income = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_income_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_income_v2_l),
+    parent_income = case_match(
+      parent_income,
+        1 ~ "Less than $5,000",
+        2 ~ "$5,000 to $11,999",
+        3 ~ "$12,000 to $15,999",
+        4 ~ "$16,000 to $24,999",
+        5 ~ "$25,000 to $34,999",
+        6 ~ "$35,000 to $49,999",
+        7 ~ "$50,000 to $74,999",
+        8 ~ "$75,000 to $99,999",
+        9 ~ "$100,000 to $199,999",
+        10 ~ "$200,000 and over"
+      ),
+    parent_partner = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_prtnr_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_prtnr_v2_l),
+    parent_partner = if_else(parent_partner == 1, 1, 0),
+    parent_partner_bio = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_prtnr_bio,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_prtnr_bio_l),
+    parent_partner_bio = if_else(parent_partner_bio == 1, 1, 0),
+    parent_partner_adopt = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_prtnr_adopt,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_prtnr_adopt_l),
+    parent_partner_adopt = if_else(parent_partner_adopt == 1, 1, 0)
+    ) |>
+  select(
+    -demo_prnt_years_us_v2,
+    -starts_with("demo_prnt_prtnr"),
+    -starts_with("demo_ethn"),
+    -starts_with("demo_race"),
+    -starts_with("demo_brthdat"),
+    -starts_with("demo_gender_id"),
+    -demo_sex_v2,
+    -starts_with("demo_prnt_marital"),
+    -starts_with("demo_prnt_ed"),
+    -starts_with("demo_prnt_income")) |>
   left_join(demog_baseline_wide, join_by("src_subject_id"))
 ```
 
 ```{r}
 
-table(demog_wide$eventname)
+table(demog_clean$demo_prnt_ed_v2_l)
+demog_clean |>
+  filter(!is.na(demo_prnt_ed_v2_l))
 ```
