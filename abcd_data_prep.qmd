@@ -266,10 +266,99 @@ demog_clean <- demog_clean |>
       eventname %in% c(
         "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
         ) ~ demo_prnt_prtnr_adopt_l),
-    parent_partner_adopt = if_else(parent_partner_adopt == 1, 1, 0)
+    parent_partner_adopt = if_else(parent_partner_adopt == 1, 1, 0),
+    parent_partner_ed = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prtnr_ed_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prtnr_ed_v2_2yr_l
+    ),
+    parent_partner_ed = case_match(
+      parent_partner_ed,
+      0 ~ "Never attended / Kindergarten",
+      1 ~ "1st Grade",
+      2 ~ "2nd Grade",
+      3 ~ "3rd Grade",
+      4 ~ "4th Grade",
+      5 ~ "5th Grade",
+      6 ~ "6th Grade",
+      7 ~ "7th Grade",
+      8 ~ "8th Grade",
+      9 ~ "9th Grade",
+      10 ~ "10th Grade",
+      11 ~ "11th Grade",
+      12 ~ "12th Grade - No Diploma",
+      13 ~ "High School Graduate",
+      14 ~ "GED or Equivalent",
+      16 ~ "Associate Degree: Occupational, Technical or Vocational",
+      17 ~ "Associate Degree: Academic Program",
+      18 ~ "Bachelor's Degree",
+      19 ~ "Master's Degree",
+      20 ~ "Professional School Degree",
+      21 ~ "Doctoral Degree",
+      22 ~ "Less than 1 year of college",
+      23 ~ "One year or more of college credit - no degree"
+    ),
+    parent_partner_income = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prtnr_income_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prtnr_income_v2_l),
+    parent_partner_income = case_match(
+      parent_partner_income,
+        1 ~ "Less than $5,000",
+        2 ~ "$5,000 to $11,999",
+        3 ~ "$12,000 to $15,999",
+        4 ~ "$16,000 to $24,999",
+        5 ~ "$25,000 to $34,999",
+        6 ~ "$35,000 to $49,999",
+        7 ~ "$50,000 to $74,999",
+        8 ~ "$75,000 to $99,999",
+        9 ~ "$100,000 to $199,999",
+        10 ~ "$200,000 and over"
+      ),
+    parent_partner_income = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prtnr_income_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prtnr_income_v2_l),
+    parent_partner_income = case_match(
+      parent_partner_income,
+        1 ~ "Less than $5,000",
+        2 ~ "$5,000 to $11,999",
+        3 ~ "$12,000 to $15,999",
+        4 ~ "$16,000 to $24,999",
+        5 ~ "$25,000 to $34,999",
+        6 ~ "$35,000 to $49,999",
+        7 ~ "$50,000 to $74,999",
+        8 ~ "$75,000 to $99,999",
+        9 ~ "$100,000 to $199,999",
+        10 ~ "$200,000 and over"
+      ),
+    combined_income = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_comb_income_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_comb_income_v2_l),
+    combined_income = case_match(
+      combined_income,
+        1 ~ "Less than $5,000",
+        2 ~ "$5,000 to $11,999",
+        3 ~ "$12,000 to $15,999",
+        4 ~ "$16,000 to $24,999",
+        5 ~ "$25,000 to $34,999",
+        6 ~ "$35,000 to $49,999",
+        7 ~ "$50,000 to $74,999",
+        8 ~ "$75,000 to $99,999",
+        9 ~ "$100,000 to $199,999",
+        10 ~ "$200,000 and over"
+      )
     ) |>
   select(
     -demo_prnt_years_us_v2,
+    -starts_with("demo_comb_income"),
+    -starts_with("demo_prtnr_income"),
+    -starts_with("demo_prtnr_ed"),
     -starts_with("demo_prnt_prtnr"),
     -starts_with("demo_ethn"),
     -starts_with("demo_race"),
