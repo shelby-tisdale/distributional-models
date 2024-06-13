@@ -64,7 +64,11 @@ dat.mri.area = read.csv('imaging/mri_y_smr_area_dst.csv')
 ```{r}
 #| label: select-relevant-vars
 
-demog_long <- demog |>
+demog_clean <- demog |>
+  filter(eventname %in% c(
+    "baseline_year_1_arm_1",
+    "2_year_follow_up_y_arm_1",
+    "4_year_follow_up_y_arm_1")) |>
   # select relevant variables
    select(
      src_subject_id,
@@ -85,16 +89,20 @@ demog_long <- demog |>
      starts_with("demo_prtnr_income_v2"),
      starts_with("demo_comb_income_v2"),
      starts_with("demo_med_insur"),
+     starts_with("demo_ethn"),
      race_ethnicity,
      acs_raked_propensity_score
-     ) |>
+     ) 
+
+demog_baseline_long <- demog_clean |>
   # pivot race variables
   pivot_longer(cols = starts_with("demo_race_a_p___"),
                names_to = "race",
                values_to = "is_race",
                values_drop_na = TRUE,
                names_prefix = "demo_race_a_p___") |>
-  filter(is_race != 0) |>
+ # select(race, is_race, src_subject_id) |>
+  filter(is_race != 0 | is.na(is_race)) |>
   mutate(race = fct_collapse(
     race,
     "White" = 10,
@@ -116,14 +124,14 @@ demog_long <- demog |>
     "NA" = c(77, 99, 0)
   )) |>
   distinct() |>
-  select(-is_race) |>
   group_by(src_subject_id) |>
-  mutate(order = row_number())
+  mutate(order = row_number()) |>
+  ungroup()
 
 # reformat wide and continue cleaning
-demog_wide <- demog_long |>
-  pivot_wider(names_from = order, values_from = race, names_prefix = "race_") |>
-  #clean hispanic origin variable 
+demog_baseline_wide <- demog_baseline_long |>
+  pivot_wider(names_from = order, values_from = race, values_fill = NA, names_prefix = "race_") |>
+   #clean hispanic origin variable 
   mutate(
     hispanic_origin = case_match(
       demo_ethn_v2,
@@ -142,9 +150,23 @@ demog_wide <- demog_long |>
     20 ~ "Central or South American", 
     40 ~ "Other Latin American origin", 
     41 ~ "Other Hispanic", 
-    .default = NA),
+    .default = NA)) |>
+  select(src_subject_id, race_1:race_5, hispanic_origin, hispanic_origin_spec)
+
+demog_clean <- demog_clean |>
+ mutate(
     # clean age variable
-    age = trunc(demo_brthdat_v2) # remove decimals 
-    ) |>
-  select(-starts_with("demo_ethn"))
+    age = case_when(
+      eventname == "baseline_year_1_arm_1" ~ trunc(demo_brthdat_v2), # remove decimals 
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ trunc(demo_brthdat_v2_l)
+    )) |>
+  select(-starts_with("demo_ethn"), -starts_with("demo_race"), -starts_with("demo_brthdat")) |>
+  left_join(demog_baseline_wide, join_by("src_subject_id"))
+```
+
+```{r}
+
+table(demog_wide$eventname)
 ```
