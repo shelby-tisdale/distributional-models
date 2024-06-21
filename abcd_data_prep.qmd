@@ -11,6 +11,8 @@ format: html
 
 library(tidyverse)
 library(reshape2)
+library(bamlss)
+library(distreg.vis)
 ```
 
 ```{r}
@@ -23,8 +25,6 @@ data_dir <- 'C:/Users/queen/Box/ABCD Tabulated Data/5.1/core/'
 
 # for Nichole
 # data_dir <- "/Users/nicholezhang/Library/CloudStorage/Box-Box/ABCD Tabulated Data/5.1/core"
-
-setwd(data_dir)
 
 # data_dir <- NULL
 
@@ -52,11 +52,12 @@ if(!is.null(data_dir)){
 
 # LOAD DATA
 # Demographic variables and propensity weights
-demog <- read.csv("abcd-general/abcd_p_demo.csv", na.strings = c(999, 777))
+demog <- read.csv("abcd-general/abcd_p_demo.csv", na.strings = c("999", "777"))
 # Age in months, Site ID (ABCD Study Design Variables), Family ID
 study_covars <- read.csv("abcd-general/abcd_y_lt.csv")
 # desikan atlas, cortical thickness
-dat.mri = read.csv('imaging/mri_y_smr_thk_dsk.csv')
+dat.mri = read.csv('imaging/mri_y_smr_thk_dsk.csv') |>
+  select(src_subject_id, eventname, smri_thick_cdk_mean)
 # desikan atlas, cortical surface area
 dat.mri.area = read.csv('imaging/mri_y_smr_area_dst.csv')
 ```
@@ -90,6 +91,8 @@ demog_clean <- demog |>
      starts_with("demo_comb_income_v2"),
      starts_with("demo_med_insur"),
      starts_with("demo_ethn"),
+     demo_biofather_v2,
+     demo_biomother_v2,
      race_ethnicity,
      acs_raked_propensity_score
      ) 
@@ -103,25 +106,25 @@ demog_baseline_long <- demog_clean |>
                names_prefix = "demo_race_a_p___") |>
  # select(race, is_race, src_subject_id) |>
   filter(is_race != 0 | is.na(is_race)) |>
-  mutate(race = fct_collapse(
+  mutate(race = case_match(
     race,
-    "White" = 10,
-    "Black" = 11,
-    "Native American" = 12,
-    "Alaskan Native" = 13,
-    "Native Hawaiian" = 14,
-    "Guamanian" = 15,
-    "Samoan" = 16,
-    "Other Pacific Islander" = 17,
-    "Asian Indian" = 18,
-    "Chinese" = 19,
-    "Filipino" = 20,
-    "Japanese" = 21,
-    "Korean" = 22,
-    "Vietnamese" = 23,
-    "Other Asian Race" = 24,
-    "Other Race" = 25,
-    "NA" = c(77, 99, 0)
+    "10" ~ "White",
+    "11" ~ "Black",
+    "12" ~ "Native American",
+    "13" ~ "Alaskan Native",
+    "14" ~ "Native Hawaiian",
+    "15" ~ "Guamanian",
+    "16" ~ "Samoan",
+    "17" ~ "Other Pacific Islander",
+    "18" ~ "Asian Indian",
+    "19" ~ "Chinese",
+    "20" ~ "Filipino",
+    "21" ~ "Japanese",
+    "22" ~ "Korean",
+    "23" ~ "Vietnamese",
+    "24" ~ "Other Asian Race",
+    "25" ~ "Other Race",
+    .default = NA
   )) |>
   distinct() |>
   group_by(src_subject_id) |>
@@ -135,21 +138,21 @@ demog_baseline_wide <- demog_baseline_long |>
   mutate(
     hispanic_origin = case_match(
       demo_ethn_v2,
-      1 ~ 1,
-      2 ~ 0,
+      1 ~ "Hispanic or Latino",
+      2 ~ "Not Hispanic or Latino",
       .default = NA),
     hispanic_origin_spec = case_match(
     demo_ethn2_v2, 
-    10 ~ "Puerto Rican", 
-    12 ~ "Dominican",
-    13 ~ "Mexican", 
-    14 ~ "Mexican American", 
-    15 ~ "Chicano", 
-    18 ~ "Cuban", 
-    19 ~ "Cuban American", 
-    20 ~ "Central or South American", 
-    40 ~ "Other Latin American origin", 
-    41 ~ "Other Hispanic", 
+    10 ~ "(Puerto Rican)", 
+    12 ~ "(Dominican)",
+    13 ~ "(Mexican)", 
+    14 ~ "(Mexican American)", 
+    15 ~ "(Chicano)", 
+    18 ~ "(Cuban)", 
+    19 ~ "(Cuban American)", 
+    20 ~ "(Central or South American)", 
+    40 ~ "(Other Latin American origin)", 
+    41 ~ "(Other Hispanic)", 
     .default = NA),
     sex = factor(demo_sex_v2),
     sex = fct_recode(
@@ -352,7 +355,15 @@ demog_clean <- demog_clean |>
         8 ~ "$75,000 to $99,999",
         9 ~ "$100,000 to $199,999",
         10 ~ "$200,000 and over"
-      )
+      ),
+    race_ethnicity = case_match(
+      race_ethnicity,
+      1 ~ "White",
+      2 ~ "Black",
+      3 ~ "Hispanic",
+      4 ~ "Asian",
+      5 ~ "Other"
+    )
     ) |>
   select(
     -demo_prnt_years_us_v2,
@@ -368,12 +379,63 @@ demog_clean <- demog_clean |>
     -starts_with("demo_prnt_marital"),
     -starts_with("demo_prnt_ed"),
     -starts_with("demo_prnt_income")) |>
-  left_join(demog_baseline_wide, join_by("src_subject_id"))
+  left_join(demog_baseline_wide, join_by("src_subject_id")) |>
+  unite("race", race_1:race_5, sep = ", ", na.rm = TRUE) #|>
+ # unite("hispanic_origin", c(hispanic_origin, hispanic_origin_spec), sep = " ", na.rm = TRUE)
+
+
+races <- demog_clean |>
+  filter(eventname == "2_year_follow_up_y_arm_1") |>
+  select(src_subject_id, race, race_ethnicity, hispanic_origin) |>
+  mutate(race = factor(race),
+         race = fct_collapse(
+           race,
+           "Black, Native American" = c("White, Black, Native American", "Black, Native American", "White, Black, Native American, Other Race", "Black, Native American, Other Race", "Black, Native American, Other Pacific Islander", "White, Black, Native American, Other Pacific Islander"),
+           "Black" = c("Black", "Black, Other Race")
+           )) |>
+  distinct() |>
+  count(race) |>
+  filter(race != "") |>
+  drop_na() |>
+  arrange(desc(n))
 ```
 
 ```{r}
+#| label: lets-make-some-priors
 
-table(demog_clean$demo_prnt_ed_v2_l)
-demog_clean |>
-  filter(!is.na(demo_prnt_ed_v2_l))
+thickness <- dat.mri |>
+  right_join(demog_clean, by = join_by("eventname", "src_subject_id")) |>
+  left_join(study_covars, by = join_by("eventname", "src_subject_id")) |>
+  select(src_subject_id, eventname, smri_thick_cdk_mean, age, sex, site_id_l) |>
+  filter(age < 16 & age > 8)
+
+thickness |>
+  ggplot() +
+  geom_boxplot(aes(x = factor(age), y = smri_thick_cdk_mean))
+
+thickness |>
+  filter(!is.na(sex)) |>
+  ggplot() +
+  geom_density(aes(x = smri_thick_cdk_mean, color = factor(age)))
+
+thickness |>
+  drop_na() |>
+  summarize(var = (sd(smri_thick_cdk_mean))^2,
+            mean = mean(smri_thick_cdk_mean))
+
+set.seed(841)
+# model specification
+model1 <- bamlss(
+  smri_thick_cdk_mean ~ age,
+  data = thickness,
+  family = "gaussian",
+  # longitudinal vars
+  timevar = "age",
+  idvar = "src_subject_id")
+dev.off()
+plot(model1, which = "samples")
+summary(model1)
+confint(model1)
+distreg.vis::vis()
 ```
+
