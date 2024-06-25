@@ -13,6 +13,10 @@ library(tidyverse)
 library(reshape2)
 library(bamlss)
 library(distreg.vis)
+library(bayesplot)
+library(tidybayes)
+library(broom.mixed)
+library(rstanarm)
 ```
 
 ```{r}
@@ -406,17 +410,25 @@ races <- demog_clean |>
 thickness <- dat.mri |>
   right_join(demog_clean, by = join_by("eventname", "src_subject_id")) |>
   left_join(study_covars, by = join_by("eventname", "src_subject_id")) |>
-  select(src_subject_id, eventname, smri_thick_cdk_mean, age, sex, site_id_l) |>
+  select(src_subject_id, eventname, smri_thick_cdk_mean, age, sex, site_id_l, race, race_ethnicity, combined_income) |>
   filter(age < 16 & age > 8)
+
+thickness |>
+  ggplot(aes(x = age, y = smri_thick_cdk_mean)) +
+  geom_jitter(alpha = 0.5) +
+  geom_smooth(method = "loess")
+  
 
 thickness |>
   ggplot() +
   geom_boxplot(aes(x = factor(age), y = smri_thick_cdk_mean))
 
 thickness |>
-  filter(!is.na(sex)) |>
+  #filter(!is.na(sex) & !is.na(race_ethnicity)) |>
+  #filter(race %in% c("White", "Black", "Chinese", "White, Black", "Asian Indian", "Native American", "White, Other Race")) |>
   ggplot() +
-  geom_density(aes(x = smri_thick_cdk_mean, color = factor(age)))
+  geom_density(aes(x = smri_thick_cdk_mean, color = factor(age))) + 
+  facet_wrap(~combined_income)
 
 thickness |>
   drop_na() |>
@@ -426,16 +438,102 @@ thickness |>
 set.seed(841)
 # model specification
 model1 <- bamlss(
-  smri_thick_cdk_mean ~ age,
+  smri_thick_cdk_mean ~ age + sex + race_ethnicity + site_id_l,
   data = thickness,
   family = "gaussian",
   # longitudinal vars
   timevar = "age",
   idvar = "src_subject_id")
-dev.off()
+
+samples <- data.frame(model1$samples[[1]]) |>
+  mutate(iteration = seq.int(nrow(samples)))
+
+samples |>
+  ggplot(aes(x = iteration, y = mu.p..Intercept.)) +
+  geom_line() +
+  theme_minimal()
+
+samples |>
+  ggplot(aes(x = iteration, y = sigma.p..Intercept.)) +
+  geom_line() +
+  theme_minimal()
+
 plot(model1, which = "samples")
 summary(model1)
 confint(model1)
 distreg.vis::vis()
+
+nd <- data.frame("age" = seq(min(thickness$age), max(thickness$age), length = 100))
+
+nd$page <- predict(model1, newdata = nd, model = "mu", term = "age", FUN = c95, intercept = FALSE)
+par(mfrow = c(1, 1))
+ylim <- range(c(nd$page))
+plot2d(page ~ age, data = nd, ylim = ylim)
+
 ```
+
+```{r}
+#| label: hierarchical-model-exploration
+
+# get mean and variance for cortical thickness by age
+thickness |>
+  group_by(age) |>
+  summarize(
+    mean_thick = mean(smri_thick_cdk_mean, na.rm = TRUE),
+    var_thick = var(smri_thick_cdk_mean, na.rm = TRUE)) |>
+  summarize(var(mean_thick))
+
+# sample 50 participants
+sample_ids <- thickness |>
+  select(src_subject_id, age, smri_thick_cdk_mean) |>
+  drop_na() |>
+  select(src_subject_id) |>
+  distinct() |>
+  sample_n(50)
+
+thickness_sample <- thickness |>
+  filter(src_subject_id %in% sample_ids$src_subject_id)
+
+mu_thick_all <- mean(thickness$smri_thick_cdk_mean, na.rm = TRUE)
+sd_thick_all <- sd(thickness$smri_thick_cdk_mean, na.rm = TRUE)
+
+thickness_model_1_prior <- stan_glmer(
+  # formula
+  smri_thick_cdk_mean ~ age + (1 | src_subject_id),
+  # data and family for prior
+  data = thickness_sample, family = gaussian,
+  # prior distribution for centered global intercept
+  # across all participants
+  prior_intercept = normal(mu_thick_all, sd_thick_all),
+  # prior for beta_1 (rate of decrease for average participant)
+  # educated guess at parameters
+  prior = normal(-0.01, 0.00126),
+  # prior for sigma_0 (variability between participants)
+  prior_aux = exponential(1, autoscale = TRUE),
+  # prior for sigma_y (degree to which cortical thickness fluctuates from regression trend)
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, iter = 10000, seed = 84735,
+  # simulating parameters from the prior, not posterior models
+  prior_PD = TRUE
+)
+
+set.seed(84735)
+
+thickness |>
+  select(src_subject_id, age, smri_thick_cdk_mean) |>
+  drop_na() |>
+  add_fitted_draws(thickness_model_1_prior, n = 4) |>
+  ggplot(aes(x = age, y = smri_thick_cdk_mean)) +
+  geom_line(aes(y = .value, group = paste(src_subject_id, .draw)), alpha = 0.5) +
+  facet_wrap(~.draw)
+
+thickness |>
+  select(src_subject_id, age, smri_thick_cdk_mean) |>
+  drop_na() |>
+  add_predicted_draws(thickness_model_1_prior, n = 100) |>
+  ggplot(aes(x = smri_thick_cdk_mean)) +
+  geom_density(aes(x = .prediction, group = .draw), alpha = 0.5) +
+  xlim(1, 4)
+```
+
 
