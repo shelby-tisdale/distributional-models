@@ -512,10 +512,7 @@ fitted_centiles_legend(
 round(Q.stats(area_model_11, xvar = na.omit(thickness)$interview_age), 3)
 wp(area_model_11, xvar = na.omit(thickness)$interview_age)
 
-GAIC(area_model_7)
-GAIC(area_model_9)
-GAIC(area_model_10) # MODEL 10 HAS BEST AIC
-GAIC(area_model_11)
+GAIC(area_model_7, area_model_9, area_model_10, area_model_11)
 
 GAIC(area_model_7,  k = log(nrow(na.omit(thickness))))
 GAIC(area_model_9,  k = log(nrow(na.omit(thickness))))
@@ -676,4 +673,117 @@ ggplot(data = centile_data) +
 
 
 
+```
+
+```{r}
+#| label: sex-stratified-centiles
+
+brain_data <- na.omit(thickness)
+brain_data_male <- brain_data |> filter(sex == "Male")
+brain_data_female <- brain_data |> filter(sex == "Female")
+
+# step 1: build lms to estimate power params
+# this will be its own function that does not plot centiles
+lms_model <- lms(area, interview_age, families = c("BCPEo"), data = brain_data, trans.x = TRUE, k = 2)
+lms_power <- lms_model$power
+
+lms_model_male <- lms(area, interview_age, families = c("BCPEo"), data = brain_data_male, trans.x = TRUE, k = 2)
+lms_power_male <- lms_model_male$power
+
+lms_model_female <- lms(area, interview_age, families = c("BCPEo"), data = brain_data_female, trans.x = TRUE, k = 2)
+lms_power_female <- lms_model_female$power
+
+# model diagnostics
+GAIC(lms_model, lms_model_male, lms_model_female)
+wp(lms_model)
+wp(lms_model_male)
+wp(lms_model_female)
+
+# step 2: build gamlss models
+area_model_male <- gamlss(
+  area ~ pb(interview_age^lms_power_male, df = lms_model_male$mu.df) + gamlss::random(src_subject_id) + gamlss::random(site_id_l),
+  sigma.formula = ~pb(interview_age, df = lms_model_male$sigma.df),
+  tau.formula = ~interview_age,
+  nu.formula = ~interview_age,
+  family = BCPEo,
+  data = brain_data_male
+)
+
+area_model_female <- gamlss(
+  area ~ pb(interview_age^lms_power_female, df = lms_model_female$mu.df) + gamlss::random(src_subject_id) + gamlss::random(site_id_l),
+  sigma.formula = ~pb(interview_age, df = lms_model_female$sigma.df),
+  tau.formula = ~interview_age,
+  nu.formula = ~interview_age,
+  family = BCPEo,
+  data = brain_data_female
+)
+
+
+wp(area_model_male)
+wp(area_model_female)
+GAIC(area_model_10, area_model_male, area_model_female)
+
+# step 3: calculate centiles
+
+cent <- c(97.5, 50, 2.5)
+
+xvar_male <- brain_data_male$interview_age
+xvar_female <- brain_data_female$interview_age
+oxvar_male <- xvar_male[order(xvar_male)]
+oxvar_female <- xvar_female[order(xvar_female)]
+oyvar_male <- obj_male$y[order(xvar_male)]
+oyvar_female <- obj_female$y[order(xvar_female)]
+
+# family name
+fname <- "BCPEo"
+# q function
+qfun <- paste("q", fname, sep = "")
+
+centile_matrix_male <- matrix(0, ncol = length(cent), nrow = dim(brain_data_male)[1])
+centile_matrix_female <- matrix(0, ncol = length(cent), nrow = dim(brain_data_female)[1])
+
+ii <- 0
+# calculate centiles (male)
+for(var in cent) {
+  newcall <- call(
+    qfun, var/100,
+    mu = fitted(obj_male,"mu")[order(xvar_male)],
+    sigma = fitted(obj_male,"sigma")[order(xvar_male)],
+    nu = fitted(obj_male,"nu")[order(xvar_male)],
+    tau = fitted(obj_male,"tau")[order(xvar_male)]) 
+  ii <- ii + 1
+    centile_matrix_male[,ii] <- eval(newcall)
+}
+
+
+ii <- 0
+# calculate centiles (female)
+for(var in cent) {
+  newcall <- call(
+    qfun, var/100,
+    mu = fitted(obj_female,"mu")[order(xvar_female)],
+    sigma = fitted(obj_female,"sigma")[order(xvar_female)],
+    nu = fitted(obj_female,"nu")[order(xvar_female)],
+    tau = fitted(obj_female,"tau")[order(xvar_female)]) 
+  ii <- ii + 1
+    centile_matrix_female[,ii] <- eval(newcall)
+}
+
+centile_data_male <- data.frame(c = centile_matrix_male, x = oxvar_male, y = oxvar_male)
+centile_data_female <- data.frame(c = centile_matrix_female, x = oxvar_female, y = oxvar_female)
+
+centile_names_male <- colnames(centile_data_male)
+centile_names_female <- colnames(centile_data_female)
+
+# plot centiles
+ggplot(data = brain_data |> filter(sex != "Intersex-Male")) +
+  geom_point(aes(x = interview_age, y = area , color = sex), size = 1, alpha = 0.05, show.legend = FALSE) +
+  geom_line(data = centile_data_male, aes(x = x, y = c.1), size = 1.5, linetype = "dashed", color = "steelblue2") + 
+  geom_line(data = centile_data_male, aes(x = x, y = c.2), size = 1.5, color = "steelblue2") +
+  geom_line(data = centile_data_male, aes(x = x, y = c.3), size = 1.5, linetype = "dashed", color = "steelblue2") +
+  geom_line(data = centile_data_female, aes(x = x, y = c.1), size = 1.5, linetype = "dashed", color = "tomato1") + 
+  geom_line(data = centile_data_female, aes(x = x, y = c.2), size = 1.5, color = "tomato1") +
+  geom_line(data = centile_data_female, aes(x = x, y = c.3), size = 1.5, linetype = "dashed", color = "tomato1") +
+  scale_color_manual(values = c("steelblue2", "tomato1")) +
+  theme_minimal()
 ```
