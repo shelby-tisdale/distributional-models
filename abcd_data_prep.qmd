@@ -8,6 +8,7 @@ format: html
 ```{r}
 #| label: load-packages
 #| warning: false
+#| message: false
 
 library(tidyverse)
 library(reshape2)
@@ -67,8 +68,9 @@ dat.mri.area = read.csv('imaging/mri_y_smr_area_dst.csv')
 ```
 
 ```{r}
-#| label: select-relevant-vars
+#| label: demographic-data-cleaning
 
+# filter for events of interest
 demog_clean <- demog |>
   filter(eventname %in% c(
     "baseline_year_1_arm_1",
@@ -101,6 +103,7 @@ demog_clean <- demog |>
      acs_raked_propensity_score
      ) 
 
+# pivot data for race recoding
 demog_baseline_long <- demog_clean |>
   # pivot race variables
   pivot_longer(cols = starts_with("demo_race_a_p___"),
@@ -178,6 +181,7 @@ demog_clean <- demog_clean |>
       eventname %in% c(
         "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
         ) ~ trunc(demo_brthdat_v2_l)),
+    # clean gender id
     gender_id = case_when(
       eventname == "baseline_year_1_arm_1" ~ demo_gender_id_v2,
       eventname %in% c(
@@ -192,6 +196,7 @@ demog_clean <- demog_clean |>
       5 ~ "Genderqueer",
       6 ~ "Other"
     ),
+    # parent marital status variable
     parent_marital_status = case_when(
       eventname == "baseline_year_1_arm_1" ~ demo_prnt_marital_v2,
       eventname %in% c(
@@ -206,6 +211,7 @@ demog_clean <- demog_clean |>
       4 ~ "Separated",
       5 ~ "Never Married",
       6 ~ "Living with Partner"),
+    # parent education variable
     parent_ed = case_when(
       eventname == "baseline_year_1_arm_1" ~ demo_prnt_ed_v2,
       eventname %in% c(
@@ -238,6 +244,7 @@ demog_clean <- demog_clean |>
       22 ~ "Less than 1 year of college",
       23 ~ "One year or more of college credit - no degree"
     ),
+    # parent income variable
     parent_income = case_when(
       eventname == "baseline_year_1_arm_1" ~ demo_prnt_income_v2,
       eventname %in% c(
@@ -256,6 +263,7 @@ demog_clean <- demog_clean |>
         9 ~ "$100,000 to $199,999",
         10 ~ "$200,000 and over"
       ),
+    # parent partner information
     parent_partner = case_when(
       eventname == "baseline_year_1_arm_1" ~ demo_prnt_prtnr_v2,
       eventname %in% c(
@@ -410,8 +418,9 @@ races <- demog_clean |>
 thickness <- dat.mri |>
   right_join(demog_clean, by = join_by("eventname", "src_subject_id")) |>
   left_join(study_covars, by = join_by("eventname", "src_subject_id")) |>
-  select(src_subject_id, eventname, smri_thick_cdk_mean, age, sex, site_id_l, race, race_ethnicity, combined_income) |>
+  select(src_subject_id, eventname, smri_thick_cdk_mean, age, sex, site_id_l, race, race_ethnicity, combined_income, interview_age) |>
   filter(age < 16 & age > 8)
+
 
 thickness |>
   ggplot(aes(x = age, y = smri_thick_cdk_mean)) +
@@ -427,24 +436,26 @@ thickness |>
   #filter(!is.na(sex) & !is.na(race_ethnicity)) |>
   #filter(race %in% c("White", "Black", "Chinese", "White, Black", "Asian Indian", "Native American", "White, Other Race")) |>
   ggplot() +
-  geom_density(aes(x = smri_thick_cdk_mean, color = factor(age))) + 
-  facet_wrap(~combined_income)
+  geom_density(aes(x = smri_thick_cdk_mean, color = factor(age)))
 
 thickness |>
   drop_na() |>
   summarize(var = (sd(smri_thick_cdk_mean))^2,
             mean = mean(smri_thick_cdk_mean))
 
+
+# using bamlss code to create simple example
 set.seed(841)
 # model specification
 model1 <- bamlss(
   smri_thick_cdk_mean ~ age + sex + race_ethnicity + site_id_l,
   data = thickness,
   family = "gaussian",
-  # longitudinal vars
+  # longitudinal vars - doesn't work
   timevar = "age",
   idvar = "src_subject_id")
 
+summary(model1)
 samples <- data.frame(model1$samples[[1]]) |>
   mutate(iteration = seq.int(nrow(samples)))
 
@@ -458,7 +469,7 @@ samples |>
   geom_line() +
   theme_minimal()
 
-plot(model1, which = "samples")
+#plot(model1, which = "samples")
 summary(model1)
 confint(model1)
 distreg.vis::vis()
@@ -473,11 +484,11 @@ plot2d(page ~ age, data = nd, ylim = ylim)
 ```
 
 ```{r}
-#| label: hierarchical-model-practiceb
+#| label: hierarchical-model-practice
 
 # get mean and variance for cortical thickness by age
 thickness |>
-  group_by(age) |>
+  group_by(interview_age) |>
   summarize(
     mean_thick = mean(smri_thick_cdk_mean, na.rm = TRUE),
     var_thick = var(smri_thick_cdk_mean, na.rm = TRUE)) |>
@@ -485,7 +496,7 @@ thickness |>
 
 # sample 50 participants
 sample_ids <- thickness |>
-  select(src_subject_id, age, smri_thick_cdk_mean) |>
+  select(src_subject_id, interview_age, smri_thick_cdk_mean) |>
   drop_na() |>
   select(src_subject_id) |>
   distinct() |>
@@ -530,7 +541,7 @@ thickness |>
   geom_line(aes(y = .value, group = paste(src_subject_id, .draw)), alpha = 0.5) +
   facet_wrap(~.draw)
 
-# distribution of corticcal thickness in 100 simulated datasets of cortical thickness
+# distribution of cortical thickness in 100 simulated datasets of cortical thickness
 thickness |>
   select(src_subject_id, age, smri_thick_cdk_mean) |>
   drop_na() |>
@@ -685,9 +696,9 @@ loo_compare(elpd_hierarchical_1, elpd_hierarchical_2)
 # model 1 is better
 ```
 ```{r}
-#| label: posterior-prediction-hierarchical
-
-
+thickness_sample |>
+  ggplot(aes(x = interview_age, y = smri_thick_cdk_mean, group = src_subject_id)) +
+  geom_line(alpha = 0.5)
 ```
 
 
