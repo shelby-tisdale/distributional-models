@@ -829,14 +829,13 @@ subset_data <- function(
     data_subset <- subset(
       brain_data, brain_data[[filter_var1]] == filter_val1)
   }
-  if(!is.null(filter_var2) & !is.null(filter_var2)) {
+  if(!is.null(filter_var1) & !is.null(filter_val1) & !is.null(filter_var2) & !is.null(filter_var2)) {
     data_subset <- subset(
       brain_data, brain_data[[filter_var1]] == filter_val1 & brain_data[[filter_var2]] == filter_val2)
-    
   }
-  else(
+  if(is.null(filter_var1) & is.null(filter_var2)) {
     data_subset <- brain_data
-  )
+    }
   
   data_subset$xvar <- data_subset[[xcol]]
   data_subset$yvar <- data_subset[[ycol]]
@@ -909,132 +908,85 @@ ycol = substitute(area)
 xcol = substitute(interview_age)
 
 calculate_centiles <- function(
-  model_list,
-  data_list,
-  demog_combos,
-  brain_data,
-  race = c("White", "Black", "Asian", "Other", "Hispanic"),
-  point_color_sex = TRUE,
+  model,
+  model_data,
+  xcol,
+  ycol,
   cent = c(97.5, 50, 2.5)
 ) {
-n_models <- length(model_list)
+
 xvar_ch <- deparse(xcol)
 x <- y <- NULL
 xvar  <- try(xvar, silent = TRUE)
 
-x_list <- list()
-ox_list <- list()
-oy_list <- list()
-centile_list <- list()
 lpar <- 4
-
-for(i in 1:n_models) {
-  data = data_list[[i]]
-  obj = model_list[[i]]
-  xvar <- get(xvarCh, envir = as.environment(data))
-  x_list[[i]] <- xvar
-  fname <- obj$family[1]
-  qfun <- paste("q",fname,sep ="")
-  oxvar <- xvar[order(xvar)]
-  ox_list[[i]] <- oxvar
-  oyvar <- obj$y[order(xvar)]
-  oy_list[[i]] <- oyvar
-  ii <- 0
-  per <- rep(0, length(cent))
-  centile_matrix <- matrix(0, ncol = length(cent), nrow = dim(data)[1])
-  colnames(centile_matrix) <- cent
-  for(var in cent) {
-    newcall <- call(qfun,var/100, mu=fitted(obj,"mu")[order(xvar)],
+data = model_data
+obj = obj
+xvar <- get(xvar_ch, envir = as.environment(data))
+fname <- obj$family[1]
+qfun <- paste("q",fname,sep ="")
+oxvar <- xvar[order(xvar)]
+oyvar <- obj$y[order(xvar)]
+ii <- 0
+per <- rep(0, length(cent))
+centile_matrix <- matrix(0, ncol = length(cent), nrow = dim(data)[1])
+colnames(centile_matrix) <- cent
+for(var in cent) {
+  newcall <- call(qfun,var/100, mu=fitted(obj,"mu")[order(xvar)],
                      sigma=fitted(obj,"sigma")[order(xvar)],
                      nu=fitted(obj,"nu")[order(xvar)],
                      tau=fitted(obj,"tau")[order(xvar)]) 
     ii <- ii + 1
     centile_matrix[,ii] <- eval(newcall)
   }
-  yvar_ch <- paste(obj$call$formula[[2]])
-  lc <- length(cent)
-  centile_data <- data.frame(
-    centile = centile_matrix, order_x = oxvar, order_y = oyvar
-  )
-  centile_list[[i]] <- centile_data
+yvar_ch <- paste(obj$call$formula[[2]])
+lc <- length(cent)
+centile_data <- data.frame(centile = centile_matrix, order_x = oxvar, order_y = oyvar)
+
+return(centile_data)
 }
 
-plot_data <- brain_data |>
-  filter(sex %in% demog_combos[,1] & race_ethnicity %in% demog_combos[,2])
-
-plot_data$xvar <- plot_data[[xvar_ch]]
-plot_data$yvar <- plot_data[[yvar_name]]
-
-area_centiles <- ggplot(plot_data)
-if(point_color_sex) {
-  area_centiles <- area_centiles +
-    geom_point(aes(x = xvar, y = yvar, color = sex), size = 1, alpha = 0.05)
+area_centiles_plot <- function(
+    model,
+    model_data,
+    sex_val,
+    race_val,
+    xcol,
+    ycol,
+    cent = c(2.5, 50, 97.5),
+    points = TRUE
+    ) {
+  
+  centile_data <- calculate_centiles(model, model_data, xcol, ycol, cent)
+  
+  
+  model_data$xcol = model_data[[xcol]]
+  model_data$ycol = model_data[[ycol]]
+  
+  # initialize ggplot object
+  gg <- ggplot(data = model_data)
+  
+  if(points) {
+    gg <- gg + geom_point(aes(x = xcol, y = ycol),
+             size = 1, alpha = 0.05, show.legend = FALSE)
+  }
+  
 }
-else {
-  area_centiles <- area_centiles +
-    geom_point(aes(x = xvar, y = yvar, color = sex), size = 1, alpha = 0.05)
+```
+
+```{r}
+
+gg_centiles <- function(
+    brain_data,
+    xcol,
+    ycol,
+    filter_var1 = NULL,
+    filter_val1 = NULL,
+    filter_var2 = NULL,
+    filter_val2 = NULL
+  ) {
+  
 }
-
-# plot centiles for each race
-group <- 1
-plot_list = list()
-for(group in 1:race) {
-  
-  current_race <- race[group]
-  sex_order <- demog_combos[which(demog_combos[,2] == current_race)]
-  race_centiles <- centile_list[which(demog_combos[,2] == current_race)]
-  centiles_male <- race_centiles[[which(sex_order == "Male")]]
-  centiles_female <- race_centiles[[which(sex_order == "Female")]]
-  
-  area_centiles <- ggplot(data = brain_data |> filter(race_ethnicity %in% race)) +
-  geom_point(aes(x = interview_age, y = area , color = sex))
-  
-  
-  
-  ggplot(data = brain_data |> filter(race_ethnicity %in% race)) +
-  geom_point(aes(x = interview_age, y = area , color = sex),
-             size = 1, alpha = 0.05, show.legend = FALSE) +
-  geom_line(data = centile_data_male, aes(x = x, y = c.1),
-            size = 1.5, linetype = "dashed", color = "steelblue2") + 
-  geom_line(data = centile_data_male, aes(x = x, y = c.2),
-            size = 1.5, color = "steelblue2") +
-  geom_line(data = centile_data_male, aes(x = x, y = c.3),
-            size = 1.5, linetype = "dashed", color = "steelblue2") +
-  geom_line(data = centile_data_female, aes(x = x, y = c.1),
-            size = 1.5, linetype = "dashed", color = "tomato1") + 
-  geom_line(data = centile_data_female, aes(x = x, y = c.2),
-            size = 1.5, color = "tomato1") +
-  geom_line(data = centile_data_female, aes(x = x, y = c.3),
-            size = 1.5, linetype = "dashed", color = "tomato1") +
-  scale_color_manual(values = c("steelblue2", "tomato1")) +
-  theme_minimal()
-
-}
-  
-  
-# filter for race
-# plot centiles for each sex for that race
-
-# plot centiles
-area_centiles <- ggplot(data = brain_data |> filter(race_ethnicity %in% race)) +
-  geom_point(aes(x = interview_age, y = area , color = sex),
-             size = 1, alpha = 0.05, show.legend = FALSE) +
-  geom_line(data = centile_data_male, aes(x = x, y = c.1),
-            size = 1.5, linetype = "dashed", color = "steelblue2") + 
-  geom_line(data = centile_data_male, aes(x = x, y = c.2),
-            size = 1.5, color = "steelblue2") +
-  geom_line(data = centile_data_male, aes(x = x, y = c.3),
-            size = 1.5, linetype = "dashed", color = "steelblue2") +
-  geom_line(data = centile_data_female, aes(x = x, y = c.1),
-            size = 1.5, linetype = "dashed", color = "tomato1") + 
-  geom_line(data = centile_data_female, aes(x = x, y = c.2),
-            size = 1.5, color = "tomato1") +
-  geom_line(data = centile_data_female, aes(x = x, y = c.3),
-            size = 1.5, linetype = "dashed", color = "tomato1") +
-  scale_color_manual(values = c("steelblue2", "tomato1")) +
-  theme_minimal()
-}
-
 ```
 
 ```{r}
