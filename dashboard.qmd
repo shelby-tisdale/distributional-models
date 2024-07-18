@@ -1,0 +1,595 @@
+---
+title: "Distributional Models for Adolescent Brain Development"
+format: dashboard
+server: shiny
+theme: [custom.scss]
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: load-packages
+#| warning: false
+#| message: false
+#| output: false
+#| context: setup
+
+library(tidyverse)
+library(gt)
+library(DT)
+library(janitor)
+library(shiny)
+library(knitr)
+library(kableExtra)
+library(scales)
+library(extrafont)
+library(gamlss)
+library(gamlss.ggplots)
+library(plotly)
+library(latex2exp)
+
+
+theme_set(theme_minimal(base_size = 16, base_family = "Atkinson Hyperlegible"))
+
+
+```
+
+```{r}
+#| label: load-and-prep-data
+#| output: false
+#| context: data
+#| warning: false
+#| message: false
+#| cache: true
+
+# labels for area variables
+area_labels <- read_csv("~/Equitable Data Science REU/distributional-models/Area_Variable_Labels.csv") |>
+  mutate(var_label = str_replace(var_label, "Cortical area in mm\\^", ""),
+         var_label = str_replace(var_label, "2 of APARC ROI ", ""),
+         var_label = str_replace(var_label, "lh-", "Left Hemisphere "),
+         var_label = str_replace(var_label, "rh-", "Right Hemisphere "),
+         var_label = str_replace(var_label, "cortical area in mm\\^2", ""),
+         var_label = str_replace(var_label, "Total ", ""),
+         var_label = str_to_lower(var_label))
+
+data_dir <- 'C:/Users/queen/Box/ABCD Tabulated Data/5.1/core/'
+
+# NOTE: must run entire code chunk
+if(!is.null(data_dir)){
+  setwd(data_dir)
+}
+
+# LOAD DATA
+# Demographic variables and propensity weights
+demog <- read.csv("abcd-general/abcd_p_demo.csv", na.strings = c("999", "777"))
+# Age in months, Site ID (ABCD Study Design Variables), Family ID
+study_covars <- read.csv("abcd-general/abcd_y_lt.csv")
+# desikan atlas, cortical thickness
+dat.mri = read.csv('imaging/mri_y_smr_thk_dsk.csv') |>
+  select(src_subject_id, eventname, smri_thick_cdk_mean)
+# desikan atlas, cortical surface area
+dat.mri.area = read.csv('imaging/mri_y_smr_area_dsk.csv') #|>
+  #select(src_subject_id, eventname, smri_area_cdk_total)
+
+# basic cleaning for demographic variables
+demog_clean <- demog |>
+  # filter for events of interest
+  filter(eventname %in% c("baseline_year_1_arm_1", "2_year_follow_up_y_arm_1",
+                          "4_year_follow_up_y_arm_1")) |>
+  # select broad demographics
+  select(src_subject_id, eventname, starts_with("demo_brthdat_v2"), demo_sex_v2, race_ethnicity) |>
+  mutate(
+    # clean age variable
+    age = case_when(
+      eventname == "baseline_year_1_arm_1" ~ trunc(demo_brthdat_v2), # remove decimals 
+      eventname %in% c("2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1") ~
+        trunc(demo_brthdat_v2_l)),
+    # broad race/ethnicity categories
+    # will disaggregate in final analysis
+    race_ethnicity = case_match(
+      race_ethnicity,
+      1 ~ "White",
+      2 ~ "Black",
+      3 ~ "Hispanic",
+      4 ~ "Asian",
+      5 ~ "Other"
+    ),
+    # recode sex variable
+    sex = factor(demo_sex_v2),
+    sex = fct_recode(
+      sex,
+      "Male" = "1",
+      "Female" = "2",
+      "Intersex-Male" = "3"
+    ))
+
+# create dataset for modeling
+mri_data <- dat.mri |>
+  full_join(dat.mri.area, by = join_by("eventname", "src_subject_id")) |>
+  # join mri data to demographics
+  right_join(demog_clean, by = join_by("eventname", "src_subject_id")) |>
+  # join to study covariates
+  left_join(study_covars, by = join_by("eventname", "src_subject_id")) |>
+  # select variables of interest
+  select(src_subject_id, eventname, smri_thick_cdk_mean, smri_area_cdk_total, age, sex, site_id_l, race_ethnicity, interview_age, , contains("smri_area_cdk")) |>
+  # remove irrelevant ages 
+  filter(age < 16 & age > 8) |>
+  mutate(interview_age = as.numeric(interview_age)) |>
+  rename(thick = smri_thick_cdk_mean,
+         total_surface_area = smri_area_cdk_total) |>
+  drop_na(thick, total_surface_area) |>
+  group_by(src_subject_id) |>
+  # fill repeated demographic values
+  mutate(sex = first(na.omit(sex)),
+         race_ethnicity = first(na.omit(race_ethnicity)),
+         # change in cortical thickness / surface area
+         change = thick - thick[1],
+         change_area = total_surface_area - total_surface_area[1],
+         src_subject_id = factor(src_subject_id),
+         site_id_l = factor(site_id_l),
+         race_ethnicity = factor(race_ethnicity)) |>
+  ungroup()
+
+area_vars <- area_labels$var_label
+
+brain_data <- na.omit(mri_data)
+
+# find all sex and race combinations for original data
+brain_data <- brain_data |>
+  filter(sex != "Intersex-Male") |>
+  mutate(sex = factor(sex))
+
+demog_combos <- brain_data |>
+  expand(sex, race_ethnicity)
+
+# subset data for each combination of sex and race
+demog_combos <- as.matrix(demog_combos)
+```
+
+```{r}
+#| label: subset-data-function
+#| context: setup
+#| output: false
+
+# SUBSETS DATA BY FILTERING FOR UP TO 2 VARIABLES
+# PREPS DATA FOR MODELING
+# EX. SEX = "MALE" AND RACE = "BLACK"
+subset_data <- function(
+    # full dataset
+    brain_data,
+    # xvariable
+    xcol,
+    # yvariable
+    ycol,
+    # first variable to filter by
+    filter_var1 = NULL,
+    # value of first variable to filter for
+    filter_val1 = NULL,
+    # second variable to filter by
+    filter_var2 = NULL,
+    # value of second variable to filter for
+    filter_val2 = NULL
+) {
+  
+  # removes underrepresented sex and omits NA values
+  brain_data <- brain_data |>
+    filter(sex != "Intersex-Male") |>
+    mutate(sex = factor(sex)) |>
+    na.omit()
+  
+    # subset data
+  if(!is.null(filter_var1) & !is.null(filter_val1) & is.null(filter_var2) & is.null(filter_var2)) {
+    data_subset <- subset(
+      brain_data, brain_data[[filter_var1]] == filter_val1)
+  }
+  if(!is.null(filter_var2) & !is.null(filter_var2)) {
+    data_subset <- subset(
+      brain_data, brain_data[[filter_var1]] == filter_val1 & brain_data[[filter_var2]] == filter_val2)
+    
+  }
+  else(
+    data_subset <- brain_data
+  )
+  
+  # creates xvar and yvar columns in dataset
+  data_subset$xvar <- data_subset[[xcol]]
+  data_subset$yvar <- data_subset[[ycol]]
+  
+  return(data_subset)
+}
+```
+
+```{r}
+#| label: model-cortical-area-function
+#| context: setup
+#| output: false
+
+# Takes output of subset_data() function as argument
+area_model <- function(data_subset) {
+  
+  # finds power transformation for gamlss model
+  power <- gamlss::findPower(yvar, xvar, data = data_subset, k = 2)
+  
+  # build gamlss model for subsetted data
+  model <- gamlss(
+  yvar ~ pb(xvar^power) + gamlss::random(src_subject_id) + gamlss::random(site_id_l),
+  sigma.formula = ~pb(xvar),
+  tau.formula = ~xvar,
+  nu.formula = ~xvar,
+  family = BCPEo,
+  data = data_subset
+  )
+
+  return(model)
+}
+
+```
+
+```{r}
+#| label: calculate-centiles-function
+#| context: setup
+#| output: false
+
+# creates data frame of centiles for a given model object
+# model_data *MUST* be the same data used to build model object
+calculate_centiles <- function(
+  # GAMLSS model object
+  model,
+  # data used to build model
+  model_data,
+  # x variable in model_data
+  xcol,
+  # y variable in model_data
+  ycol,
+  # centiles to calculate
+  cent = c(97.5, 50, 2.5)
+) {
+
+xvar_ch <- deparse(xcol)
+obj = model
+x <- y <- NULL
+
+xvar  <- get(xvar_ch, envir=as.environment(model_data))
+fname <- obj$family[1]
+qfun <- paste("q",fname,sep ="")
+oxvar <- xvar[order(xvar)]
+oyvar <- obj$y[order(xvar)]
+
+lpar <- 4
+
+ii <- 0
+per <- rep(0, length(cent))
+centile_matrix <- matrix(0, ncol = length(cent), nrow = dim(model_data)[1])
+colnames(centile_matrix) <- cent
+
+for(var in cent) {
+  newcall <- call(qfun,var/100, mu=fitted(obj,"mu")[order(xvar)],
+                     sigma=fitted(obj,"sigma")[order(xvar)],
+                     nu=fitted(obj,"nu")[order(xvar)],
+                     tau=fitted(obj,"tau")[order(xvar)]) 
+    ii <- ii + 1
+    centile_matrix[,ii] <- eval(newcall)
+}
+
+yvar_ch <- paste(obj$call$formula[[2]])
+
+lc <- length(cent)
+centile_data <- data.frame(
+  centile = centile_matrix,
+  x = oxvar,
+  y = oyvar)
+
+return(centile_data)
+}
+```
+
+
+```{r}
+#| label: plot-area-centiles-function
+#| context: setup
+#| output: false
+
+# returns ggplot for given model and data used to create model
+centiles_plot <- function(
+    # gamlss model object
+    model,
+    # data used to create gamlss model
+    model_data,
+    # x variable in data
+    xcol,
+    # y variable in data
+    ycol,
+    cent = c(2.5, 50, 97.5),
+    # whether to include points on plot in addition to centile curves
+    points = TRUE,
+    race = "",
+    sex = "",
+    region = "Total Brain"
+    ) {
+  
+  centile_data <- calculate_centiles(model, model_data, xcol, ycol, cent)
+  lc <- length(cent)
+  c_names <- colnames(centile_data)
+  line.size = 1.5
+  line.col = hcl.colors(lc, palette = "Dark 2")
+  line.type = rep(1, length(cent))
+  
+  # initialize ggplot object
+  gg <- ggplot(data = centile_data)
+  
+  if(points) {
+    gg <- gg + geom_point(aes(x = x, y = y),
+             size = 1, alpha = 0.2, show.legend = FALSE, color = "gray")
+  }
+  for(i in 1:lc) {
+    
+    if(c_names[i] == "centile.50") {
+      gg <- gg +
+      geom_line(
+        aes_string(x = "x", y = c_names[i]),
+        color = line.col[i], linewidth = line.size)
+    }
+    
+    else {
+      gg <- gg +
+      geom_line(
+        aes_string(x = "x", y = c_names[i]),
+        color = line.col[i], linetype = "dashed", linewidth = line.size)
+    }
+    
+  }
+  
+  gg <- gg +
+    scale_y_continuous(label = comma, limits = c(125000, 250000)) +
+    scale_x_continuous(limits = c(108, 180), breaks = c(96, 108, 120, 132, 144, 156, 168, 180)) +
+    labs(x = "Age (Months)", y = TeX("Cortical Surface Area in $mm^2$"),
+         title = paste(
+           "Centiles for", region, "\nfor", race, sex, "Adolescents", sep = " "),
+         subtitle = "Using Box-Cox Power Exponential Original Family")
+    theme_minimal()  
+  
+  return(gg)
+}
+```
+
+
+```{r}
+#| label: build-models
+#| context: data
+#| output: false
+#| message: false
+#| warning: false
+#| cache: true
+
+data_list <- list()
+for(row in 1:nrow(demog_combos)) {
+  data_list[[row]] = subset_data(
+    brain_data,
+    xcol = substitute(interview_age),
+    ycol = substitute(total_surface_area),
+    filter_var1 = "sex",
+    filter_val1 = demog_combos[row, 1],
+    filter_var2 = "race_ethnicity",
+    filter_val2 = demog_combos[row, 2])
+}
+
+# create models for each combination of sex and race
+model_list <- list()
+demog_combos
+for(row in 1:nrow(demog_combos)) {
+  print(
+    paste("FITTING MODEL", row, ":", demog_combos[row,2], demog_combos[row,1]))
+  model_list[[row]] = area_model(
+    data_subset = data_list[[row]])
+  model_name <- paste(
+    demog_combos[row, 1], demog_combos[row, 2], "Model", sep = "_")
+  assign(model_name, model_list[[row]])
+}
+
+for(item in 1:length(model_list)) {
+  print(paste("MODEL", item, sep = " "))
+}
+```
+
+# Home
+
+##  {.sidebar width="25%"}
+
+**Project Background**
+
+## Column
+
+```{r}
+#| title: "Abstract"
+
+print("Hello World")
+```
+
+
+```{r}
+#| title: "Modeling Approach"
+
+print("Hello World")
+```
+
+
+```{r}
+#| title: "Table 1. Sample Demographics"
+
+print("Hello World")
+```
+
+# Centile Estimation
+
+Text here
+
+## Column {width="50%"}
+
+```{r}
+#| title: "Input Individual Data to Determine Centile"
+
+print("Hello World")
+
+```
+
+## Column {width="50%"}
+
+```{r}
+#| title: "Determine Centiles for Subpopulation"
+
+print("Hello World")
+
+```
+
+# Cortical Thickness
+
+# Cortical Surface Area
+
+## {.toolbar}
+
+```{r}
+#| title: "Select Options"
+#| layout-nrow: 2
+#| layout-ncol: 1
+
+
+# select y variable
+selectInput(
+  "area_var",
+  "Select area of brain to model cortical surface area: ",
+  area_vars,
+  selected = "whole brain"
+  )
+
+# centile input boxes
+checkboxGroupInput(
+  "centiles_area",
+  "Select Centiles to Include in Plot",
+  c(0.4, 2, 2.5, 10, 25, 50, 75, 90, 97.5, 98, 99.6),
+  selected = c(2.5, 50, 97.5),
+  inline = TRUE
+  )
+
+```
+
+
+## Row
+
+```{r}
+#| content: card-toolbar
+
+race_levels <- c(levels(brain_data$race_ethnicity), "All")
+
+# select race
+selectInput(
+  "race1",
+  "Race",
+  choices = race_levels,
+  multiple = FALSE,
+  selected = "All"
+)
+
+# select sex
+selectInput(
+  "sex1",
+  "Sex",
+  choices = c("Male", "Female"),
+  multiple = FALSE,
+  selected = "Female"
+)
+```
+
+```{r}
+#| title: "Plot 1"
+
+plotOutput("area_centile_plot_1")
+
+```
+
+
+```{r}
+#| content: card-toolbar
+
+# select race
+selectInput(
+  "race2",
+  "Race",
+  choices = race_levels,
+  multiple = FALSE,
+  selected = "All"
+)
+
+# select sex
+selectInput(
+  "sex2",
+  "Sex",
+  choices = c("Male", "Female"),
+  multiple = FALSE,
+  selected = "Female"
+)
+
+```
+
+```{r}
+#| title: "Plot 2"
+
+plotOutput("area_centile_plot_2")
+
+```
+
+```{r}
+#| label: calculate-and-plot-centiles
+#| context: server
+
+output$area_centile_plot_1 <- renderPlot({
+  
+  demog_combos <- as.data.frame(demog_combos)
+  race1 <- input$race1[1]
+  sex1 <- input$sex1[1]
+  centiles_to_plot <- as.numeric(input$centiles_area)
+  region_label <- input$area_var
+  
+  index <- which(demog_combos$sex == sex1 & demog_combos$race_ethnicity == race1)
+  model_data <- data_list[[index]]
+  model_obj <- model_list[[index]]
+  
+  centiles_plot(
+    model_obj,
+    model_data,
+    xcol = substitute(interview_age),
+    ycol = substitute(total_surface_area),
+    cent = centiles_to_plot,
+    race = race1,
+    sex = sex1,
+    region = region_label
+  )
+  
+})
+
+output$area_centile_plot_2 <- renderPlot({
+  
+  demog_combos <- as.data.frame(demog_combos)
+  race2 <- input$race2[1]
+  sex2 <- input$sex2[1]
+  centiles_to_plot <- as.numeric(input$centiles_area)
+  region_label <- input$area_var
+  
+  index <- which(demog_combos$sex == sex2 & demog_combos$race_ethnicity == race2)
+  model_data <- data_list[[index]]
+  model_obj <- model_list[[index]]
+  
+  centiles_plot(
+    model_obj,
+    model_data,
+    xcol = substitute(interview_age),
+    ycol = substitute(total_surface_area),
+    cent = centiles_to_plot,
+    race = race2,
+    sex = sex2,
+    region = region_label
+  )
+  
+})
+```
+
+
