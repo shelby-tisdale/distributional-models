@@ -27,6 +27,8 @@ library(gamlss)
 library(gamlss.ggplots)
 library(plotly)
 library(latex2exp)
+library(ggseg)
+library(patchwork)
 
 
 theme_set(theme_minimal(base_size = 16, base_family = "Atkinson Hyperlegible"))
@@ -65,8 +67,7 @@ demog <- read.csv("abcd-general/abcd_p_demo.csv", na.strings = c("999", "777"))
 # Age in months, Site ID (ABCD Study Design Variables), Family ID
 study_covars <- read.csv("abcd-general/abcd_y_lt.csv")
 # desikan atlas, cortical thickness
-dat.mri = read.csv('imaging/mri_y_smr_thk_dsk.csv') |>
-  select(src_subject_id, eventname, smri_thick_cdk_mean)
+dat.mri = read.csv('imaging/mri_y_smr_thk_dsk.csv')
 # desikan atlas, cortical surface area
 dat.mri.area = read.csv('imaging/mri_y_smr_area_dsk.csv') #|>
   #select(src_subject_id, eventname, smri_area_cdk_total)
@@ -111,19 +112,14 @@ mri_data <- dat.mri |>
   # join to study covariates
   left_join(study_covars, by = join_by("eventname", "src_subject_id")) |>
   # select variables of interest
-  select(src_subject_id, eventname, smri_thick_cdk_mean, age, sex, site_id_l, race_ethnicity, interview_age, , contains("smri_area_cdk")) |>
+  select(src_subject_id, eventname, age, sex, site_id_l, race_ethnicity, interview_age, contains("smri_thick"), contains("smri_area_cdk")) |>
   # remove irrelevant ages 
   filter(age < 16 & age > 8) |>
   mutate(interview_age = as.numeric(interview_age)) |>
-  rename(thick = smri_thick_cdk_mean) |>
-  drop_na(thick, smri_area_cdk_total) |>
   group_by(src_subject_id) |>
   # fill repeated demographic values
   mutate(sex = first(na.omit(sex)),
          race_ethnicity = first(na.omit(race_ethnicity)),
-         # change in cortical thickness / surface area
-         change = thick - thick[1],
-         change_area = smri_area_cdk_total - smri_area_cdk_total[1],
          src_subject_id = factor(src_subject_id),
          site_id_l = factor(site_id_l),
          race_ethnicity = factor(race_ethnicity)) |>
@@ -175,6 +171,91 @@ demog_brain_combos <- expand.grid(
   distinct()
 
 demog_brain_combos <- as.matrix(demog_brain_combos)
+
+brain_pictures <- brain_data |> 
+  pivot_longer(cols = (smri_thick_cdk_banksstslh:smri_thick_cdk_trvtmrh), 
+                names_to = "phenotype") |> 
+  #add hemisphere classification 
+  mutate(hemisphere = case_when( 
+                                 grepl("lh", phenotype) ~ "left", 
+                                 grepl("rh", phenotype) ~ "right", 
+                                 .default = NA), 
+          #use forcats to collapse regions 
+         region = factor(phenotype), 
+         region = fct_collapse(
+           phenotype, 
+          "pericalcarine" = c("smri_thick_cdk_pericclh",
+                              "smri_thick_cdk_periccrh"),
+          "caudal anterior cingulate" = c("smri_thick_cdk_cdacatelh",
+                                          "smri_thick_cdk_cdacaterh"),
+          "caudal middle frontal" = c("smri_thick_cdk_cdmdfrlh",
+                                      "smri_thick_cdk_cdmdfrrh"),
+          "cuneus" = c("smri_thick_cdk_cuneuslh",
+                       "smri_thick_cdk_cuneusrh"),
+          "entorhinal" = c("smri_thick_cdk_ehinallh",
+                           "smri_thick_cdk_ehinalrh"),
+          "fusiform" = c("smri_thick_cdk_fusiformlh",
+                         "smri_thick_cdk_fusiformrh"),
+          "inferior parietal" = c("smri_thick_cdk_ifpllh",
+                                  "smri_thick_cdk_ifplrh"),
+          "isthmus cingulate" = c("smri_thick_cdk_ihcatelh",
+                                  "smri_thick_cdk_ihcaterh"),
+          "lateral occipital" = c("smri_thick_cdk_locclh",
+                                  "smri_thick_cdk_loccrh"),
+          "lateral orbitofrontal" = c("smri_thick_cdk_lobfrlh",
+                                      "smri_thick_cdk_lobfrrh"),
+          "lingual" = c("smri_thick_cdk_linguallh",
+                        "smri_thick_cdk_lingualrh"),
+          "medial orbitofrontal" = c("smri_thick_cdk_mobfrlh",
+                                     "smri_thick_cdk_mobfrrh"),
+          "middle temporal" = c("smri_thick_cdk_mdtmlh",
+                                "smri_thick_cdk_mdtmrh"),
+          "parahippocampal" = c("smri_thick_cdk_parahpallh",
+                                "smri_thick_cdk_parahpalrh"),
+          "paracentral" = c("smri_thick_cdk_paracnlh",
+                            "smri_thick_cdk_paracnrh"),
+          "pars opercularis" = c("smri_thick_cdk_parsopclh",
+                                 "smri_thick_cdk_parsopcrh"),
+          "pars orbitalis" = c("smri_thick_cdk_parsobislh",
+                               "smri_thick_cdk_parsobisrh"),
+          "pars triangularis" = c("smri_thick_cdk_parstgrislh",
+                                  "smri_thick_cdk_parstgrisrh"),
+          "pericalcarine" = c("smri_thick_cdk_pericclh",
+                              "smri_thick_cdk_periccrh"),
+          "postcentral" = c("smri_thick_cdk_postcnlh",
+                            "smri_thick_cdk_postcnrh"),
+          "posterior cingulate" = c("smri_thick_cdk_ptcatelh",
+                                    "smri_thick_cdk_ptcaterh"),
+          "precentral" = c("smri_thick_cdk_precnlh",
+                           "smri_thick_cdk_precnrh"),
+          "precuneus" = c("smri_thick_cdk_pclh",
+                          "smri_thick_cdk_pcrh"),
+          "rostral anterior cingulate" = c("smri_thick_cdk_rracatelh",
+                                           "smri_thick_cdk_rracaterh"),
+          "rostral middle frontal" = c("smri_thick_cdk_rrmdfrlh",
+                                       "smri_thick_cdk_rrmdfrrh"),
+          "superior frontal" = c("smri_thick_cdk_sufrlh",
+                                 "smri_thick_cdk_sufrrh"),
+          "superior parietal" = c("smri_thick_cdk_supllh",
+                                  "smri_thick_cdk_suplrh"),
+          "superior temporal" = c("smri_thick_cdk_sutmlh",
+                                  "smri_thick_cdk_sutmrh"),
+          "supramarginal" = c("smri_thick_cdk_smlh",
+                              "smri_thick_cdk_smrh"),
+          "frontal pole" = c("smri_thick_cdk_frpolelh",
+                             "smri_thick_cdk_frpolerh"),
+          "temporal pole" = c("smri_thick_cdk_tmpolelh",
+                              "smri_thick_cdk_tmpolerh"),
+          "transverse temporal" = c("smri_thick_cdk_trvtmlh",
+                                    "smri_thick_cdk_trvtmrh"),
+          "insula" = c("smri_thick_cdk_insulalh",
+                       "smri_thick_cdk_insularh"),
+          "inferior temporal" = c("smri_thick_cdk_iftmlh",
+                                  "smri_thick_cdk_iftmrh"),
+          "bankssts" = c("smri_thick_cdk_banksstslh", 
+                         "smri_thick_cdk_banksstsrh"),
+          other_level = 'missing'
+          ))
 
 ```
 
@@ -617,7 +698,7 @@ output$area_centile_plot_1 <- renderPlot({
                    demog_brain_combos$race_ethnicity == race1 &
                    demog_brain_combos$brain_location == region_label)
   
-  y_limits <- c(as.numeric(demog_brain_combos[index, 5]), as.numeric(demog_brain_combos[index, 6]))
+  y_limits <- c(as.numeric(demog_brain_combos[index, 5]), as.numeridemog_brain_combos[index, 6])
   
   model_data <- data_list[[index]]
   model_obj <- model_list[[index]]
