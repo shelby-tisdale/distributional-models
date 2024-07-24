@@ -472,7 +472,7 @@ area_model_10 <- gamlss(
   tau.formula = ~interview_age,
   nu.formula = ~interview_age,
   family = BCPEo,
-  data = na.omit(thickness)
+  data = brain_data
 )
 
 # no power transformation, random effects, no smoothing for tau and nu
@@ -770,12 +770,13 @@ for(var in cent) {
     centile_matrix_female[,ii] <- eval(newcall)
 }
 
-centile_data_male <- data.frame(c = centile_matrix_male, x = oxvar_male, y = oxvar_male)
-centile_data_female <- data.frame(c = centile_matrix_female, x = oxvar_female, y = oxvar_female)
+centile_data_male <- data.frame(c = centile_matrix_male, x = oxvar_male, y = oyvar_male)
+centile_data_female <- data.frame(c = centile_matrix_female, x = oxvar_female, y = oyvar_female)
 
 centile_names_male <- colnames(centile_data_male)
 centile_names_female <- colnames(centile_data_female)
 
+library(latex2exp)
 # plot centiles
 area_centiles_1 <- ggplot(data = brain_data |> filter(sex != "Intersex-Male")) +
   geom_point(aes(x = interview_age, y = area , color = sex),
@@ -793,8 +794,20 @@ area_centiles_1 <- ggplot(data = brain_data |> filter(sex != "Intersex-Male")) +
   geom_line(data = centile_data_female, aes(x = x, y = c.3),
             size = 1.5, linetype = "dashed", color = "tomato1") +
   scale_color_manual(values = c("steelblue2", "tomato1")) +
-  theme_minimal()
+  scale_x_continuous(breaks = c(108,120,132,144, 156, 168,180,192),
+                     labels = c(9,10,11,12,13,14,15,16)) +
+  scale_y_continuous(label = comma) +
+  theme_minimal() +
+  labs(
+    x = "Interview age in years",
+    y = TeX("Total Cortical Surface Area in $mm^2$"),
+    title = "Centiles for total cortical surface area of adolescents",
+    subtitle = "fitted with Box-Cox Power Exponential original family",
+    caption = "Includes 2.5, 50, and 97.5 centiles, stratified by sex (Red: Female, Blue: Male)"
+  )
 
+
+ggsave(filename = "area_centiles_1.png")
 ggplotly(area_centiles_1, tooltip = c("interview_age", "area", "gender"))
 ```
 
@@ -907,6 +920,7 @@ point_color_sex = TRUE
 ycol = substitute(area)
 xcol = substitute(interview_age)
 
+
 calculate_centiles <- function(
   model,
   model_data,
@@ -916,21 +930,22 @@ calculate_centiles <- function(
 ) {
 
 xvar_ch <- deparse(xcol)
+obj = model
 x <- y <- NULL
-xvar  <- try(xvar, silent = TRUE)
 
-lpar <- 4
-data = model_data
-obj = obj
-xvar <- get(xvar_ch, envir = as.environment(data))
+xvar  <- get(xvar_ch, envir=as.environment(model_data))
 fname <- obj$family[1]
 qfun <- paste("q",fname,sep ="")
 oxvar <- xvar[order(xvar)]
 oyvar <- obj$y[order(xvar)]
+
+lpar <- 4
+
 ii <- 0
 per <- rep(0, length(cent))
-centile_matrix <- matrix(0, ncol = length(cent), nrow = dim(data)[1])
+centile_matrix <- matrix(0, ncol = length(cent), nrow = dim(model_data)[1])
 colnames(centile_matrix) <- cent
+
 for(var in cent) {
   newcall <- call(qfun,var/100, mu=fitted(obj,"mu")[order(xvar)],
                      sigma=fitted(obj,"sigma")[order(xvar)],
@@ -938,40 +953,88 @@ for(var in cent) {
                      tau=fitted(obj,"tau")[order(xvar)]) 
     ii <- ii + 1
     centile_matrix[,ii] <- eval(newcall)
-  }
+}
+
 yvar_ch <- paste(obj$call$formula[[2]])
+
 lc <- length(cent)
-centile_data <- data.frame(centile = centile_matrix, order_x = oxvar, order_y = oyvar)
+centile_data <- data.frame(
+  centile = centile_matrix,
+  x = oxvar,
+  y = oyvar)
 
 return(centile_data)
 }
 
+model <- area_model_10
+model_data <- brain_data
+
 area_centiles_plot <- function(
     model,
     model_data,
-    sex_val,
-    race_val,
     xcol,
     ycol,
+    sex_val = "All",
+    race_val = "All",
     cent = c(2.5, 50, 97.5),
     points = TRUE
     ) {
   
   centile_data <- calculate_centiles(model, model_data, xcol, ycol, cent)
-  
-  
-  model_data$xcol = model_data[[xcol]]
-  model_data$ycol = model_data[[ycol]]
+  lc <- length(cent)
+  c_names <- colnames(centile_data)
+  line.size = 1.5
+  line.col = hcl.colors(lc, palette = "Dark 2")
+  line.type = rep(1, length(cent))
   
   # initialize ggplot object
-  gg <- ggplot(data = model_data)
+  gg <- ggplot(data = centile_data)
   
   if(points) {
-    gg <- gg + geom_point(aes(x = xcol, y = ycol),
+    gg <- gg + geom_point(aes(x = x, y = y),
              size = 1, alpha = 0.05, show.legend = FALSE)
   }
+  for(i in 1:lc) {
+    
+    if(c_names[i] == "centile.50") {
+      gg <- gg +
+      geom_line(
+        aes_string(x = "x", y = c_names[i]),
+        color = line.col[i], linewidth = line.size)
+    }
+    
+    else {
+      gg <- gg +
+      geom_line(
+        aes_string(x = "x", y = c_names[i]),
+        color = line.col[i], linetype = "dashed", linewidth = line.size)
+    }
+    
+  }
   
+  gg <- gg + theme_minimal()  
+  
+  return(gg)
 }
+
+area_centiles_plot(model = area_model_10,
+                   model_data = brain_data,
+                   ycol = substitute(area),
+                   xcol = substitute(interview_age))
+
+area_centiles_1 <- ggplot(data = brain_data) +
+  geom_point(aes(x = interview_age, y = area),
+             size = 1, alpha = 0.05, show.legend = FALSE) +
+  geom_line(data = centile_data, aes(x = x, y = centile.2.5),
+            size = 1.5, linetype = "dashed", color = "steelblue2") + 
+  geom_line(data = centile_data, aes(x = x, y = centile.50),
+            size = 1.5, color = "steelblue2") +
+  geom_line(data = centile_data, aes(x = x, y = centile.97.5),
+            size = 1.5, linetype = "dashed", color = "steelblue2") +
+  theme_minimal()
+
+fitted_centiles(area_model_10)
+
 ```
 
 ```{r}

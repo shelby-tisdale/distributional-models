@@ -111,20 +111,19 @@ mri_data <- dat.mri |>
   # join to study covariates
   left_join(study_covars, by = join_by("eventname", "src_subject_id")) |>
   # select variables of interest
-  select(src_subject_id, eventname, smri_thick_cdk_mean, smri_area_cdk_total, age, sex, site_id_l, race_ethnicity, interview_age, , contains("smri_area_cdk")) |>
+  select(src_subject_id, eventname, smri_thick_cdk_mean, age, sex, site_id_l, race_ethnicity, interview_age, , contains("smri_area_cdk")) |>
   # remove irrelevant ages 
   filter(age < 16 & age > 8) |>
   mutate(interview_age = as.numeric(interview_age)) |>
-  rename(thick = smri_thick_cdk_mean,
-         total_surface_area = smri_area_cdk_total) |>
-  drop_na(thick, total_surface_area) |>
+  rename(thick = smri_thick_cdk_mean) |>
+  drop_na(thick, smri_area_cdk_total) |>
   group_by(src_subject_id) |>
   # fill repeated demographic values
   mutate(sex = first(na.omit(sex)),
          race_ethnicity = first(na.omit(race_ethnicity)),
          # change in cortical thickness / surface area
          change = thick - thick[1],
-         change_area = total_surface_area - total_surface_area[1],
+         change_area = smri_area_cdk_total - smri_area_cdk_total[1],
          src_subject_id = factor(src_subject_id),
          site_id_l = factor(site_id_l),
          race_ethnicity = factor(race_ethnicity)) |>
@@ -140,10 +139,43 @@ brain_data <- brain_data |>
   mutate(sex = factor(sex))
 
 demog_combos <- brain_data |>
+  mutate(race_ethnicity = as.character(race_ethnicity)) |>
   expand(sex, race_ethnicity)
 
-# subset data for each combination of sex and race
-demog_combos <- as.matrix(demog_combos)
+male_all <- c("Male", "All")
+female_all <- c("Female", "All")
+
+demog_combos <- rbind(demog_combos, male_all, female_all)
+sex <- demog_combos$sex
+race_ethnicity <- demog
+
+limits <- brain_data |> pivot_longer(
+  cols = starts_with("smri_area"),
+  names_to = "var_name",
+  values_to = "values"
+) |>
+  group_by(var_name) |>
+  summarize(
+    min_value = min(values),
+    max_value = max(values)
+  )
+  
+
+demog_brain_combos <- expand.grid(
+  sex = demog_combos$sex,
+  race_ethnicity = demog_combos$race_ethnicity,
+  brain_location = area_vars) |>
+  left_join(area_labels, by = join_by(brain_location == var_label)) |>
+  left_join(limits, by = join_by(var_name)) |>
+  mutate(sex = factor(sex),
+         race_ethnicity = factor(race_ethnicity),
+         brain_location = factor(brain_location),
+         min_value = as.numeric(min_value),
+         max_value = as.numeric(max_value)) |>
+  distinct()
+
+demog_brain_combos <- as.matrix(demog_brain_combos)
+
 ```
 
 ```{r}
@@ -177,6 +209,11 @@ subset_data <- function(
     mutate(sex = factor(sex)) |>
     na.omit()
   
+  if(filter_val2 == "All") {
+    filter_var2 = NULL
+    filter_val2 = NULL
+  }
+  
     # subset data
   if(!is.null(filter_var1) & !is.null(filter_val1) & is.null(filter_var2) & is.null(filter_var2)) {
     data_subset <- subset(
@@ -187,9 +224,9 @@ subset_data <- function(
       brain_data, brain_data[[filter_var1]] == filter_val1 & brain_data[[filter_var2]] == filter_val2)
     
   }
-  else(
+  if(is.null(filter_var1) & is.null(filter_val1) & is.null(filter_var2) & is.null(filter_var2)) {
     data_subset <- brain_data
-  )
+  }
   
   # creates xvar and yvar columns in dataset
   data_subset$xvar <- data_subset[[xcol]]
@@ -246,6 +283,7 @@ calculate_centiles <- function(
 ) {
 
 xvar_ch <- deparse(xcol)
+yvar_ch <- ycol
 obj = model
 x <- y <- NULL
 
@@ -271,7 +309,7 @@ for(var in cent) {
     centile_matrix[,ii] <- eval(newcall)
 }
 
-yvar_ch <- paste(obj$call$formula[[2]])
+#yvar_ch <- paste(obj$call$formula[[2]])
 
 lc <- length(cent)
 centile_data <- data.frame(
@@ -304,6 +342,7 @@ centiles_plot <- function(
     points = TRUE,
     race = "",
     sex = "",
+    ylims = c(125000, 250000),
     region = "Total Brain"
     ) {
   
@@ -340,9 +379,10 @@ centiles_plot <- function(
   }
   
   gg <- gg +
-    scale_y_continuous(label = comma, limits = c(125000, 250000)) +
-    scale_x_continuous(limits = c(108, 180), breaks = c(96, 108, 120, 132, 144, 156, 168, 180)) +
-    labs(x = "Age (Months)", y = TeX("Cortical Surface Area in $mm^2$"),
+    scale_y_continuous(label = comma, limits = ylims) +
+    scale_x_continuous(breaks = c(108,120,132,144, 156, 168,180,192),
+                     labels = c(9,10,11,12,13,14,15,16)) +
+    labs(x = "Age (Years)", y = TeX("Cortical Surface Area in $mm^2$"),
          title = paste(
            "Centiles for", region, "\nfor", race, sex, "Adolescents", sep = " "),
          subtitle = "Using Box-Cox Power Exponential Original Family")
@@ -352,6 +392,47 @@ centiles_plot <- function(
 }
 ```
 
+```{r}
+#| label: download-models
+#| eval: false
+
+#define file name
+sink('model_list.csv')
+
+#print my_list to file
+print(model_list)
+
+#close external connection to file 
+sink()
+
+save(model_list, file = "area_model_list.RData")
+
+```
+
+```{r}
+#| label: load-models
+#| context: data
+#| cache: true
+#| cache-lazy: false
+
+data_list <- list()
+for(row in 1:nrow(demog_brain_combos)) {
+  
+  my_ycol <- demog_brain_combos[row,4]
+  
+  data_list[[row]] = subset_data(
+    brain_data,
+    xcol = "interview_age",
+    ycol = my_ycol,
+    filter_var1 = "sex",
+    filter_val1 = demog_brain_combos[row, 1],
+    filter_var2 = "race_ethnicity",
+    filter_val2 = demog_brain_combos[row, 2])
+}
+
+setwd("~/Equitable Data Science REU/distributional-models")
+load("area_model_list.RData")
+```
 
 ```{r}
 #| label: build-models
@@ -359,35 +440,17 @@ centiles_plot <- function(
 #| output: false
 #| message: false
 #| warning: false
+#| eval: false
+#| cache-lazy: false
 #| cache: true
-
-data_list <- list()
-for(row in 1:nrow(demog_combos)) {
-  data_list[[row]] = subset_data(
-    brain_data,
-    xcol = substitute(interview_age),
-    ycol = substitute(total_surface_area),
-    filter_var1 = "sex",
-    filter_val1 = demog_combos[row, 1],
-    filter_var2 = "race_ethnicity",
-    filter_val2 = demog_combos[row, 2])
-}
 
 # create models for each combination of sex and race
 model_list <- list()
 demog_combos
-for(row in 1:nrow(demog_combos)) {
+for(row in 1:nrow(demog_brain_combos)) {
   print(
-    paste("FITTING MODEL", row, ":", demog_combos[row,2], demog_combos[row,1]))
-  model_list[[row]] = area_model(
-    data_subset = data_list[[row]])
-  model_name <- paste(
-    demog_combos[row, 1], demog_combos[row, 2], "Model", sep = "_")
-  assign(model_name, model_list[[row]])
-}
-
-for(item in 1:length(model_list)) {
-  print(paste("MODEL", item, sep = " "))
+    paste("FITTING MODEL", row, ":", demog_brain_combos[row,2], demog_brain_combos[row,1], demog_brain_combos[row,3]))
+  model_list[[row]] = area_model(data_subset = data_list[[row]])
 }
 ```
 
@@ -458,7 +521,7 @@ selectInput(
   "area_var",
   "Select area of brain to model cortical surface area: ",
   area_vars,
-  selected = "whole brain"
+  selected = c("whole brain ")
   )
 
 # centile input boxes
@@ -525,7 +588,7 @@ selectInput(
   "Sex",
   choices = c("Male", "Female"),
   multiple = FALSE,
-  selected = "Female"
+  selected = "Male"
 )
 
 ```
@@ -543,13 +606,19 @@ plotOutput("area_centile_plot_2")
 
 output$area_centile_plot_1 <- renderPlot({
   
-  demog_combos <- as.data.frame(demog_combos)
+  demog_brain_combos <- as.data.frame(demog_brain_combos)
   race1 <- input$race1[1]
   sex1 <- input$sex1[1]
   centiles_to_plot <- as.numeric(input$centiles_area)
-  region_label <- input$area_var
+  region_label <- input$area_var[1]
+  region_var <- area_labels$var_name[which(area_labels$var_label == region_label)]
   
-  index <- which(demog_combos$sex == sex1 & demog_combos$race_ethnicity == race1)
+  index <- which(demog_brain_combos$sex == sex1 &
+                   demog_brain_combos$race_ethnicity == race1 &
+                   demog_brain_combos$brain_location == region_label)
+  
+  y_limits <- c(as.numeric(demog_brain_combos[index, 5]), as.numeric(demog_brain_combos[index, 6]))
+  
   model_data <- data_list[[index]]
   model_obj <- model_list[[index]]
   
@@ -557,10 +626,11 @@ output$area_centile_plot_1 <- renderPlot({
     model_obj,
     model_data,
     xcol = substitute(interview_age),
-    ycol = substitute(total_surface_area),
+    ycol = region_var,
     cent = centiles_to_plot,
     race = race1,
     sex = sex1,
+    ylims = y_limits,
     region = region_label
   )
   
@@ -568,13 +638,17 @@ output$area_centile_plot_1 <- renderPlot({
 
 output$area_centile_plot_2 <- renderPlot({
   
-  demog_combos <- as.data.frame(demog_combos)
+  demog_brain_combos <- as.data.frame(demog_brain_combos)
   race2 <- input$race2[1]
   sex2 <- input$sex2[1]
   centiles_to_plot <- as.numeric(input$centiles_area)
-  region_label <- input$area_var
+  region_label <- input$area_var[1]
+  region_var <- area_labels$var_name[which(area_labels$var_label == region_label)]
   
-  index <- which(demog_combos$sex == sex2 & demog_combos$race_ethnicity == race2)
+  index <- which(demog_brain_combos$sex == sex2 & demog_brain_combos$race_ethnicity == race2 & demog_brain_combos$brain_location == region_label)
+  
+  y_limits <- c(as.numeric(demog_brain_combos[index, 5]), as.numeric(demog_brain_combos[index, 6]))
+  
   model_data <- data_list[[index]]
   model_obj <- model_list[[index]]
   
@@ -582,10 +656,11 @@ output$area_centile_plot_2 <- renderPlot({
     model_obj,
     model_data,
     xcol = substitute(interview_age),
-    ycol = substitute(total_surface_area),
+    ycol = region_var,
     cent = centiles_to_plot,
     race = race2,
     sex = sex2,
+    ylims = y_limits,
     region = region_label
   )
   
