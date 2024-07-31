@@ -1,9 +1,6 @@
 ---
 title: "Distributional Models for Adolescent Brain Development"
-format:
-  dashboard:
-    nav-buttons: [github]
-    github: https://github.com/shelby-tisdale/distributional-models
+format: dashboard
 server: shiny
 theme: [theme/custom.scss]
 editor_options: 
@@ -49,7 +46,7 @@ theme_set(theme_minimal(base_size = 16, base_family = "Atkinson Hyperlegible"))
 # labels for cortical surface area variables
 # from ABCD data dictionary
 area_labels <- read_csv(
-  "~/Equitable Data Science REU/distributional-models/Area_Variable_Labels.csv"
+  "~/Equitable Data Science REU/distributional-models/additional data/Area_Variable_Labels.csv"
   ) |>
   # clean labels
   mutate(var_label = str_replace(var_label, "Cortical area in mm\\^", ""),
@@ -220,7 +217,8 @@ brain_pictures <- brain_data |>
       "bankssts" = c("smri_thick_cdk_banksstslh", "smri_thick_cdk_banksstsrh"),
       other_level = 'missing')) |>
   select(src_subject_id, eventname, age, sex, site_id_l, race_ethnicity,
-         interview_age, phenotype, value, hemisphere, region)
+         interview_age, phenotype, value, hemisphere, region) |>
+  na.omit()
 ```
 
 ```{r}
@@ -249,7 +247,8 @@ thick_vars <- thickness_labels$phenotype
 
 # find all combinations of race and sex
 demog_combos <- brain_data |>
-  mutate(race_ethnicity = as.character(race_ethnicity)) |>
+  mutate(race_ethnicity = as.character(race_ethnicity),
+         sex = factor(sex)) |>
   expand(sex, race_ethnicity)
 
 # create vectors to add "All" race category
@@ -288,6 +287,7 @@ demog_brain_combos_area <- expand.grid(
   sex = demog_combos$sex,
   race_ethnicity = demog_combos$race_ethnicity,
   brain_location = area_vars) |>
+  distinct() |>
   left_join(area_labels, by = join_by(brain_location == var_label)) |>
   left_join(limits_area, by = join_by(var_name)) |>
   mutate(sex = factor(sex),
@@ -295,7 +295,6 @@ demog_brain_combos_area <- expand.grid(
          brain_location = factor(brain_location),
          min_value = as.numeric(min_value),
          max_value = as.numeric(max_value)) |>
-  distinct() |>
   as.matrix()
 
 # demographic combinations matrix for thickness variables
@@ -303,6 +302,7 @@ demog_brain_combos_thick <- expand.grid(
   sex = demog_combos$sex,
   race_ethnicity = demog_combos$race_ethnicity,
   brain_location = thick_vars) |>
+  distinct() |>
   left_join(thickness_labels, by = join_by(brain_location == phenotype)) |>
   left_join(limits_thick, by = join_by(brain_location == var_name)) |>
   mutate(sex = factor(sex),
@@ -310,10 +310,9 @@ demog_brain_combos_thick <- expand.grid(
          brain_location = factor(brain_location),
          min_value = as.numeric(min_value),
          max_value = as.numeric(max_value)) |>
-  distinct() |>
   select(sex, race_ethnicity, brain_location, region, thick_label, min_value,
          max_value) |>
-  as.matrix(demog_brain_combos_thick)
+  as.matrix()
 ```
 
 ```{r}
@@ -419,7 +418,7 @@ calculate_centiles <- function(
   # centiles to calculate
   cent = c(97.5, 50, 2.5)
 ) {
-
+  
 xvar_ch <- deparse(xcol)
 yvar_ch <- ycol
 obj = model
@@ -439,7 +438,8 @@ centile_matrix <- matrix(0, ncol = length(cent), nrow = dim(model_data)[1])
 colnames(centile_matrix) <- cent
 
 for(var in cent) {
-  newcall <- call(qfun,var/100, mu=fitted(obj,"mu")[order(xvar)],
+  newcall <- call(qfun,var/100,
+                  mu=fitted(obj,"mu")[order(xvar)],
                      sigma=fitted(obj,"sigma")[order(xvar)],
                      nu=fitted(obj,"nu")[order(xvar)],
                      tau=fitted(obj,"tau")[order(xvar)]) 
@@ -493,7 +493,7 @@ centiles_plot <- function(
   # initialize ggplot object
   gg <- ggplot(data = centile_data)
   
-  if(points) {
+  if(points == TRUE) {
     gg <- gg + geom_point(aes(x = x, y = y),
              size = 1, alpha = 0.2, show.legend = FALSE, color = "gray")
   }
@@ -537,15 +537,17 @@ save(model_list, file = "area_model_list.RData")
 ```
 
 ```{r}
-#| label: load-models-area
+#| label: area-model-data
 #| context: data
-#| cache: true
+#| cache: false
 #| cache-lazy: false
 
 data_list <- list()
+
 for(row in 1:nrow(demog_brain_combos_area)) {
   
   my_ycol <- demog_brain_combos_area[row,4]
+  
   
   data_list[[row]] = subset_data(
     brain_data,
@@ -556,6 +558,15 @@ for(row in 1:nrow(demog_brain_combos_area)) {
     filter_var2 = "race_ethnicity",
     filter_val2 = demog_brain_combos_area[row, 2])
 }
+
+```
+
+
+```{r}
+#| label: load-models-area
+#| context: data
+#| cache: false
+#| cache-lazy: false
 
 setwd("~/Equitable Data Science REU/distributional-models")
 load("area_model_list.RData")
@@ -569,7 +580,7 @@ load("area_model_list.RData")
 #| warning: false
 #| eval: false
 #| cache-lazy: false
-#| cache: true
+#| cache: false
 
 # create models for each combination of sex and race
 model_list <- list()
@@ -584,8 +595,9 @@ for(row in 1:nrow(demog_brain_combos_area)) {
 ```{r}
 #| label: build-models-thickness-function
 #| context: data
+#| eval: false
 #| cache-lazy: false
-#| cache: true
+#| cache: false
 
 #make models 
 thickness_model <- function(data_subset) {
@@ -605,12 +617,10 @@ thickness_model <- function(data_subset) {
 ```
 
 ```{r}
-#| label: load-models-thickness
+#| label: thickness-model-data
 #| context: data
 #| cache: true
 #| cache-lazy: false
-#| output: false
-#| eval: false
 
 thick_data_list <- list()
 for(row in 1:nrow(demog_brain_combos_thick)) {
@@ -626,7 +636,17 @@ for(row in 1:nrow(demog_brain_combos_thick)) {
     filter_var2 = "race_ethnicity",
     filter_val2 = demog_brain_combos_thick[row, 2])
 }
+```
 
+```{r}
+#| label: load-models-thickness
+#| context: data
+#| cache: false
+#| cache-lazy: false
+#| output: false
+#| eval: false
+
+setwd("~/Equitable Data Science REU/distributional-models")
 load("thick_model_list.RData")
 ```
 
@@ -642,6 +662,7 @@ for(row in 1:nrow(demog_brain_combos_thick)) {
   thick_model_list[[row]] = thickness_model(data_subset = thick_data_list[[row]])
 }
 
+setwd("~/Equitable Data Science REU/distributional-models")
 save(thick_model_list, file = "thick_model_list.RData")
 ```
 
@@ -656,10 +677,9 @@ save(thick_model_list, file = "thick_model_list.RData")
 ```{r}
 #| label: abstract
 #| title: "Abstract"
-
-print("Hello World")
 ```
 
+Distributional, or normative, modeling allows us to create centile curves to visualize the variation of a developmental phenotype as a function of age. Previous studies have developed centile curves through a variety of modeling approaches, typically incorporating a cross-sectional design to model trajectories throughout the human lifespan. Such designs typically include only baseline data from longitudinal studies, failing to account for within-person changes. Additionally, while many studies plot centile curves separately for each sex and account for site- and/or study-related variability, other demographic factors, such as race, are not considered. This project seeks to address these limitations using fMRI data from the Adolescent Brain Cognitive Development (ABCD) study. The GAMLSS R package was used to calculate centile curves for cortical thickness and surface area for over 60 different brain regions. Models were developed separately for each sex and racial category and visualized through an interactive dashboard. Preliminary findings suggest that adolescent developmental trajectories for cortical thickness and surface area vary widely by sex and race, implying that normative benchmarks for individual- and population-level variation would improve with the inclusion of demographic variables. Future research should identify mediating factors that may contribute to divergent trajectories across demographic groups. 
 
 ```{r}
 #| label: modeling-appraoch
@@ -832,6 +852,7 @@ output$thick_centile_plot_1 <- renderPlot({
   
 })
 
+
 output$thick_centile_plot_2 <- renderPlot({
   
   demog_brain_combos_thick <- as.data.frame(demog_brain_combos_thick)
@@ -948,7 +969,7 @@ selectInput(
   "Sex",
   choices = c("Male", "Female"),
   multiple = FALSE,
-  selected = "Male"
+  selected = "Female"
 )
 
 ```
@@ -967,16 +988,17 @@ plotOutput("area_centile_plot_2")
 output$area_centile_plot_1 <- renderPlot({
   
   demog_brain_combos_area <- as.data.frame(demog_brain_combos_area)
+
   race1 <- input$race1[1]
   sex1 <- input$sex1[1]
   centiles_to_plot <- as.numeric(input$centiles_area)
   region_label <- input$area_var[1]
   region_var <- area_labels$var_name[which(area_labels$var_label == region_label)]
   
-  index <- which(demog_brain_combos_area$sex == sex1 &
-                   demog_brain_combos_area$race_ethnicity == race1 &
-                   demog_brain_combos_area$brain_location == region_label)
-  
+  index <- which(demog_brain_combos_area$sex == sex1 & demog_brain_combos_area$race_ethnicity == race1 & demog_brain_combos_area$brain_location == region_label)
+
+  demog_brain_combos_area <- as.matrix(demog_brain_combos_area)
+
   y_limits <- c(as.numeric(demog_brain_combos_area[index, 5]),
                 as.numeric(demog_brain_combos_area[index, 6]))
   
@@ -988,7 +1010,7 @@ output$area_centile_plot_1 <- renderPlot({
     model_data,
     xcol = substitute(interview_age),
     ycol = region_var,
-    cent = centiles_to_plot,
+    #cent = centiles_to_plot,
     race = race1,
     sex = sex1,
     ylims = y_limits,
