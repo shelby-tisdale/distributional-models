@@ -539,7 +539,7 @@ save(model_list, file = "area_model_list.RData")
 ```{r}
 #| label: area-model-data
 #| context: data
-#| cache: false
+#| cache: true
 #| cache-lazy: false
 
 data_list <- list()
@@ -565,7 +565,7 @@ for(row in 1:nrow(demog_brain_combos_area)) {
 ```{r}
 #| label: load-models-area
 #| context: data
-#| cache: false
+#| cache: true
 #| cache-lazy: false
 
 setwd("~/Equitable Data Science REU/distributional-models")
@@ -619,6 +619,7 @@ thickness_model <- function(data_subset) {
 ```{r}
 #| label: thickness-model-data
 #| context: data
+#| eval: true
 #| cache: true
 #| cache-lazy: false
 
@@ -641,10 +642,10 @@ for(row in 1:nrow(demog_brain_combos_thick)) {
 ```{r}
 #| label: load-models-thickness
 #| context: data
-#| cache: false
+#| cache: true
 #| cache-lazy: false
 #| output: false
-#| eval: false
+#| eval: true
 
 setwd("~/Equitable Data Science REU/distributional-models")
 load("thick_model_list.RData")
