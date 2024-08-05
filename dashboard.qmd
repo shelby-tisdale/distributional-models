@@ -5,6 +5,9 @@ server: shiny
 theme: [theme/custom.scss]
 editor_options: 
   chunk_output_type: console
+editor: 
+  markdown: 
+    wrap: 72
 ---
 
 ```{r}
@@ -643,7 +646,7 @@ for (row in 1:nrow(demog_brain_combos_area)) {
 ```{r}
 #| label: load-models-area
 #| context: data
-#| cache: false
+#| cache: true
 #| cache-lazy: false
 
 setwd("~/Equitable Data Science REU/distributional-models")
@@ -723,7 +726,7 @@ for (row in 1:nrow(demog_brain_combos_thick)) {
 ```{r}
 #| label: load-models-thickness
 #| context: data
-#| cache: false
+#| cache: true
 #| cache-lazy: false
 #| output: false
 
@@ -749,31 +752,90 @@ save(thick_model_list, file = "thick_model_list_updated.RData")
 
 # Home
 
-##  {.sidebar width="25%"}
+## Row {height="30%"}
 
-**Project Background**
+::: {.card title="About the Dashboard"}
+Distributional modeling, also known as normative modeling, allows for
+the creation of centile curves to visualize the variation of a
+developmental phenotype as a function of age. Previous studies have
+utilized a variety of modeling approaches, including Bayesian
+regression, Gaussian processes, and Generalized Additive Models for
+Location, Scale, and Shape (GAMLSS) to model trajectories of cortical
+thickness and cortical surface area over the course of the human
+lifespan. Such studies typically incorporate a cross-sectional design,
+generally discarding non-baseline data from longitudinal data sources
+and failing to account for within-person changes across time.
+Additionally, while many studies plot centile curves separately for each
+sex and utilize random effects to account for site- and/or study-related
+variability, other demographic factors, such as race, are not considered
+in the distributional models.
 
-## Column
+This project addresses these limitations through the creation of
+longitudinal distributional models for cortical thickness and surface
+area of adolescents ages 9 to 15, stratified by race and sex, for 70
+different brain regions. Spatial and longitudinal results are visualized
+in this interactive dashboard – explore to learn more!
+:::
 
-```{r}
-#| label: abstract
-#| title: "Abstract"
-```
+## Row {height="70%"}
 
-```{r}
-#| label: modeling-appraoch
-#| title: "Modeling Approach"
+### Column {width="50%"}
 
-print("Hello World")
-```
+::: {.card title="Methods"}
+**Data** This study utilizes MRI data from the [Adolescent Brain
+Cognitive Development (ABCD) Study](https://abcdstudy.org/), a large,
+multi-site, longitudinal study of adolescent health and brain
+development in the United States. The sample includes all study
+participants with MRI data at least one timepoint. Sample demographics
+are summarized in Table 1.
 
+**Modeling** Models were fitted with the [Generalized Additive Models
+for Location, Scale, and Shape (GAMLSS) R
+package](https://www.gamlss.com/). Models for Cortical thickness (CT)
+and Cortical Surface Area (CSA) for the $i^{th}$ combination of race,
+sex, and brain region are as follows:
+
+$$
+\text{CSA}_i \sim \text{Box-Cox Power Exponential}(\mu_i, \sigma_i, \nu_i, \tau_i) \text{ with}
+$$ $$
+\log(\mu_i) = \alpha_{\mu_i} + s_{\mu_i}(\text{age}^{p_i}) + \gamma_{\mu_i, \text{site}} + \gamma_{\mu_i, \text{subject}}
+$$ $$
+\log(\sigma_i) = \alpha_{\sigma_i} + s_{\sigma_i}(\text{age})
+$$ $$
+\nu_i = \alpha_{\nu_i} + \beta_{\nu_i,1}\text{age}$$ $$
+\tau_i = \alpha_{\tau_i} + \beta_{\tau_i,1}\text{age}
+$$
+
+$$
+\text{CT}_i \sim \text{Box-Cox T}(\mu_i, \sigma_i, \nu_i, \tau_i) \text{ with}
+$$ $$
+\log(\mu_i) = \alpha_{\mu_i} + s_{\mu_i}(\text{age}^{p_i}) + \gamma_{\mu_i, \text{site}} + \gamma_{\mu_i, \text{subject}}
+$$ $$
+\log(\sigma_i) = \alpha_{\sigma_i} + s_{\sigma_i}(\text{age})
+$$ $$
+\nu_i = \alpha_{\nu_i} + \beta_{\nu_i,1}\text{age}$$ $$
+\tau_i = \alpha_{\tau_i} + \beta_{\tau_i,1}\text{age}
+$$where:
+
+-   $\alpha$ terms correspond to fixed effects of the intercept
+-   $\beta$ terms correspond to fixed effects of age
+-   $\lambda$ terms correspond to random site-level and subject-level
+    random effects
+-   P-spline smoothing terms $s$ are included for adolescent age for
+    $\mu$ and $\sigma$.
+-   Adolescent age was transformed using GAMLSS functions which found
+    the optimal power transformation, $\pi$, for each model.
+
+Models were fit separately for each combination of race, sex, and region
+of the brain, resulting in 1704 total models.
+:::
+
+### Column {width="50%"}
 
 ```{r}
 #| label: table-1
 #| title: "Table 1. Sample Demographics"
-#| eval: false
-
-distinct(brain_data, src_subject_id)
+#| eval: true
 
 brain_data |>
   na.omit() |>
@@ -813,8 +875,8 @@ as_gt() |>
 
 ```{r}
 #| label: data-for-centile-plots
-#| context: data
-#| cache: true
+#| context: setup
+#| cache: false
 
 #read in thickness data 
 demog_thick_combos_est <- read.csv("additional data/demog_thick_combos.csv") |> 
@@ -837,11 +899,10 @@ area_df <- read.csv("additional data/full_area_df.csv") |>
 load("additional data/area_parameters.RData")
 ```
 
-## {.sidebar}
+##  {.sidebar}
 
 ```{r}
 #| label: centile-estimation-inputs
-#| panel: sidebar 
 
 selectInput(
   inputId = "phenotype",
@@ -885,13 +946,14 @@ selectInput(
   )
 ```
 
+## Column {width="25%"}
 
-## {.row}
-## Row { height = 20%}
+### Row {height="25%"}
 
-### Column {width = 25%}
+\*\*Note: Gaps in centile curves represent ages (by months) for which we
+don't have data. Leave values for which you don't have data as 0.
 
-**Note: Gaps in centile curves represent ages (by months) for which we don't have data. Leave values for which you don't have data as 0. 
+### Row {height="75%"}
 
 ```{r}
 #| label: input-birthday-centiles
@@ -900,12 +962,6 @@ dateInput(
   inputId = "birthday",
   label = "Date of Birth (yyyy/mm/dd)"
   )
-```
-
-### Column {width = 25%}
-
-```{r}
-#| label: input-visit-dates-centiles
 
 dateInput(
   inputId = "baseline_date",
@@ -917,11 +973,6 @@ numericInput(
   label = "Baseline Value (mm)",
   value = 0
   )
-```
-
-### Column {width = 25%}
-```{r}
-#| label: input-visit-dates-centiles-2
 
 dateInput(
   inputId = "year2_date",
@@ -933,11 +984,6 @@ numericInput(
   label = "Year 2 Value (mm)",
   value = 0
   )
-```
-
-### Column {width = 25%}
-```{r}
-#| label: input-visit-dates-centiles-4
 
 dateInput(
   inputId = "year4_date", 
@@ -951,7 +997,7 @@ numericInput(
   )
 ```
 
-## Row {height = 80%}
+## Column {width="75%"}
 
 ```{r}
 #| label: output-centile-plot
@@ -1139,7 +1185,6 @@ calculate_centile <- function(
 }
 ```
 
-
 ```{r}
 #| label: render-individualized-centile-plot
 #| context: server
@@ -1258,10 +1303,9 @@ output$ctplot <- renderPlot({
 
 # Spatial Visualization
 
-## {.sidebar}
+##  {.sidebar}
 
 ```{r}
-#| panel: sidebar
 #| label: sidebar-brain-inputs
 
 model_xvars <- c(107:189)
@@ -1273,7 +1317,7 @@ selectInput(
   )
 
 sliderInput(
-  "age",
+  "age_brain",
   "Adolescent Age (months)",
   min = min(model_xvars),
   max = max(model_xvars),
@@ -1281,47 +1325,47 @@ sliderInput(
   )
 
 selectInput(
-  inputId = "phenotype",
+  inputId = "phenotype_brain",
   label = "Phenotype",
   choices = c("Cortical Thickness", "Cortical Surface Area"),
   selected = "Cortical Thickness"
   )
 
 checkboxGroupInput(
-  inputId = "centiles",
+  inputId = "centiles_brain",
   label = "Centile Selections",
   choices = c(0.4, 2, 2.5, 10, 25, 50, 75, 90, 97.5, 98, 99.6),
   selected = c(2.5, 50, 97.5)
   )
 
 selectInput(
-  inputId = "race", 
+  inputId = "race_brain", 
   label = "Race", 
   choices = c("White", "Black", "Hispanic", "Asian", "Other", "All"), 
   selected = "All"
   )
 
 selectInput(
-  inputId = "sex", 
+  inputId = "sex_brain", 
   label = "Sex", 
   choices = c("Male", "Female"), 
   selected = "Female"
   )
 
 selectInput(
-  inputId = "hemi",
+  inputId = "hemi_brain",
   label = "Hemisphere",
   choices = c("left", "right", "Both"),
   selected = c("Both")
   )
-
 ```
 
-## Row {height=100%}
+## Row {height="100%"}
+
+### Column {height="100%"}
 
 ```{r}
 #| label: output-spatial-visualizations
-#| panel: fill
 
 plotOutput('brainPlot')
 ```
@@ -1362,54 +1406,54 @@ log_ratio <- function(orig_df) {
 ```{r}
 #| label: plot-centile-function-brains
 #| context: setup
+#| cache: false
+
+#take log ratios
+thickness_logs <- log_ratio(thickness_df)
+area_logs <- log_ratio(area_df)
 
 #makes a plot for a specific centile + race/sex combo 
-plot_centile <- function(centile_input, age_input, race_input, sex_input, 
-                         statistic_input, phenotype_input, hemi_input){ 
-
-    #take log ratios
-    thickness_logs <- log_ratio(thickness_df)
-    area_logs <- log_ratio(area_df)  
+plot_centile <- function(
+    centile_input,
+    age_input,
+    race_input,
+    sex_input, 
+    statistic_input,
+    phenotype_input,
+    hemi_input) { 
   
  
   #define dataframe based on what user wants to see 
    working_df <- if (statistic_input == "Raw Data") {
-    if(phenotype_input == "Cortical Thickness"){thickness_df
-    }
+    if (phenotype_input == "Cortical Thickness") {thickness_df}
     else {area_df}
-    }
-    else {
-      if(phenotype_input == "Cortical Thickness"){
-        thickness_logs
-      }
-      else {area_logs}
-    }
+   }
+   else {
+    if (phenotype_input == "Cortical Thickness") {thickness_logs}
+    else {area_logs}
+   }
    
-  
   #define limits based on input 
   pheno_limits <- if (statistic_input == "Scaled Regional Max Ratio") { 
-    if (phenotype_input == "Cortical Thickness") {
-   c(0, 0.35) } else { c(0, 1)}
-    } else if (phenotype_input == "Cortical Thickness") { 
-    c(1.3, 4)
-  } else { 
-      c(0, 15000)}
+    if (phenotype_input == "Cortical Thickness") {c(0, 0.35)}
+    else {c(0, 1)}
+  }
+  else if (phenotype_input == "Cortical Thickness") {c(1.3, 4)}
+  else {c(0, 15000)}
   
+  legend_name <- if (statistic_input == "Scaled Regional Max Ratio") { 
+  "log(max/centile value)"
+  }
+  else {
+    if (phenotype_input == "Cortical Thickness") {"cortical thickness (mm)"} 
+    else{"cortical surface area (mm^2)"}
+  }
   
-  legend_name <- if(statistic_input == "Scaled Regional Max Ratio"){ 
-    "log(max/centile value)"} else { 
-      if(phenotype_input == "Cortical Thickness"){
-        "cortical thickness (mm)"} 
-      else{
-        "cortical surface area (mm^2)"
-      }
-      }
-  
-   #define geom brain object depending on hemisphere input
-  
-   geom_brain_obj <- if (hemi_input == "Both") {
+  #define geom brain object depending on hemisphere input
+  geom_brain_obj <- if (hemi_input == "Both") {
     geom_brain(atlas = dk, aes(fill = values))
-  } else {
+  }
+  else {
    geom_brain(atlas = dk, 
               hemi = as.character(hemi_input), 
                aes(fill = values))
@@ -1421,12 +1465,9 @@ plot_centile <- function(centile_input, age_input, race_input, sex_input,
   
   working_df$values <- working_df[[age_input]]
   
-  
-
   #make title make sense for "2nd" 
-  if(centile_input == 2){ 
-    plot_title <- "2nd percentile"
-    } else { plot_title <- paste(centile_input, "th percentile", sep = "")}
+  if (centile_input == 2) {plot_title <- "2nd percentile"}
+  else {plot_title <- paste(centile_input, "th percentile", sep = "")}
   
   plot <- working_df |> 
     ggplot() + 
@@ -1438,9 +1479,7 @@ plot_centile <- function(centile_input, age_input, race_input, sex_input,
     labs(title = plot_title) + 
     theme_void()
   
-  
   return(plot)
-  
   }
 ```
 
@@ -1448,13 +1487,21 @@ plot_centile <- function(centile_input, age_input, race_input, sex_input,
 #| label: plot-centiles-function-brains
 #| context: setup
 
-plot_centiles <- function(centiles_input, age_input, race_input, sex_input, 
-                          statistic_input, phenotype_input, hemi_input){ 
+plot_centiles <- function(
+    centiles_input,
+    age_input,
+    race_input,
+    sex_input,
+    statistic_input,
+    phenotype_input,
+    hemi_input
+    ) { 
+
   plot_outputs <- c()
   
   age_years <- round(as.numeric(age_input)/12, digits = 4)
   
-  for(i in 1:length(centiles_input)){ 
+  for (i in 1:length(centiles_input)) { 
     curr_centile <- centiles_input[i] 
     plot <- plot_centile(curr_centile, age_input, race_input, sex_input, 
                          statistic_input, phenotype_input, hemi_input)
@@ -1463,17 +1510,19 @@ plot_centiles <- function(centiles_input, age_input, race_input, sex_input,
   
 
 
-  if(race_input == "All" & sex_input != "All") { 
-    title <- paste("Centile Visualizations for all", sex_input, "Adolescents --", age_input, "Months")}
-  if(race_input != "All" & sex_input != "All"){ 
-    title <- paste("Centile Visualizations for", race_input, sex_input, "Adolescents --", age_years, "Years")}
+  if (race_input == "All" & sex_input != "All") { 
+    title <- paste("Centile Visualizations for all", sex_input,
+                   "Adolescents --", age_input, "Months")}
+  if (race_input != "All" & sex_input != "All") { 
+    title <- paste("Centile Visualizations for", race_input, sex_input,
+                   "Adolescents --", age_years, "Years")}
   
   
   nCol = floor(sqrt(length(centiles_input)))
   #top_text <- text_grob(title, gp = gpar(fontsize = 15, font = 8))
   
   final_plot <- do.call("grid.arrange", 
-                        c(plot_outputs, ncol=nCol, top = title))
+                        c(plot_outputs, ncol = nCol, top = title))
   
   return(final_plot)
   
@@ -1487,20 +1536,20 @@ plot_centiles <- function(centiles_input, age_input, race_input, sex_input,
 output$brainPlot <- renderPlot({
 
   plot_centiles(
-    centiles_input = input$centiles,
-    age_input = as.character(input$age),
-    race_input = input$race,
-    sex_input = input$sex,
+    centiles_input = input$centiles_brain,
+    age_input = as.character(input$age_brain),
+    race_input = input$race_brain,
+    sex_input = input$sex_brain,
     statistic_input = input$statistic,
-    phenotype_input = input$phenotype,
-    hemi_input = input$hemi)
+    phenotype_input = input$phenotype_brain,
+    hemi_input = input$hemi_brain)
   })
 
 ```
 
 # Cortical Thickness
 
-## {.toolbar}
+##  {.toolbar}
 
 ```{r}
 #| label: thickness-global-input
@@ -1608,7 +1657,9 @@ output$thick_centile_plot_1 <- renderPlot({
   region_label <-  input$thickness_var[1]
   region_var <- thickness_labels$var_name[which(thickness_labels$var_label == region_label)]
   
-  index <- which(demog_brain_combos_thick$sex == sex3 & demog_brain_combos_thick$race_ethnicity == race3 & demog_brain_combos_thick$var_label == region_label)
+  index <- which(demog_brain_combos_thick$sex == sex3 &
+                 demog_brain_combos_thick$race_ethnicity == race3 &
+                 demog_brain_combos_thick$var_label == region_label)
 
   demog_brain_combos_thick <- as.matrix(demog_brain_combos_thick)
 
@@ -1643,7 +1694,9 @@ output$thick_centile_plot_2 <- renderPlot({
   region_label <-  input$thickness_var[1]
   region_var <- thickness_labels$var_name[which(thickness_labels$var_label == region_label)]
   
-  index <- which(demog_brain_combos_thick$sex == sex4 & demog_brain_combos_thick$race_ethnicity == race4 & demog_brain_combos_thick$var_label == region_label)
+  index <- which(demog_brain_combos_thick$sex == sex4 &
+                 demog_brain_combos_thick$race_ethnicity == race4 &
+                 demog_brain_combos_thick$var_label == region_label)
 
   demog_brain_combos_thick <- as.matrix(demog_brain_combos_thick)
 
@@ -1668,10 +1721,9 @@ output$thick_centile_plot_2 <- renderPlot({
 })
 ```
 
-
 # Cortical Surface Area
 
-## {.toolbar}
+##  {.toolbar}
 
 ```{r}
 #| title: "Select Options"
@@ -1836,3 +1888,39 @@ output$area_centile_plot_2 <- renderPlot({
 ```
 
 # About Us
+
+## Row
+
+::: {.card title="About Us"}
+# Shelby Tisdale
+
+Shelby is a senior at Duke University studying Statistics, Math
+Education, and Child Policy. She is from Mississippi originally, and
+still can’t get over the lack of extreme summer heat and humidity in the
+Twin Cities! When she isn’t enforcing “tidyverse style guidelines,”
+Shelby likes to crochet, pretend to enjoy video games, and meal plan.
+
+**GitHub**: <https://github.com/shelby-tisdale>
+
+# Nichole Zhang
+
+Nichole is a senior at Duke University studying Statistics and
+International Comparative Studies, but most people don't know what that
+is, so she says she studies History. She is from Chapel Hill, North
+Carolina and visualized hundreds of brains in the process of developing
+this app. She’s spent her time in the Twin Cities this summer learning
+to rock climb and crossing locations off her map of independent
+bookstores to visit in the Midwest.
+:::
+
+## Row
+
+::: {.card title="Acknowledgements"}
+We are grateful to Dr. Mark Fiecas for advising this project and
+directing the 2024 Equitable Data Science in Adolescent Development REU
+at the University of Minnesota – Twin Cities, to all guest speakers,
+hackathon hosts, and partners from the UMN School of Public Health and
+beyond, to David Schneck for teaching our summer R course, and the
+National Science Foundation for making this program and project
+possible.
+:::
