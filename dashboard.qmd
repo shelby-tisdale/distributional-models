@@ -31,6 +31,13 @@ library(latex2exp)
 library(ggseg)
 library(patchwork)
 library(gtsummary)
+library(rlist)
+library(grid)
+library(gridExtra)
+library(viridis)
+library(ggseg3d)
+library(ggpubr)
+library(lubridate)
 
 # set theme for visualizations
 theme_set(theme_minimal(base_size = 16, base_family = "Atkinson Hyperlegible"))
@@ -70,7 +77,7 @@ area_vars <- area_labels$var_label
 #| context: data
 #| warning: false
 #| message: false
-#| cache: false
+#| cache: true
 
 thickness_labels <- read_csv(
   "~/Equitable Data Science REU/distributional-models/additional data/Thickness_Variable_Labels.csv"
@@ -85,8 +92,6 @@ thickness_labels <- read_csv(
 thick_vars <- thickness_labels$var_label
 ```
 
-
-
 ```{r}
 #| label: load-and-prep-data
 #| output: false
@@ -99,7 +104,7 @@ thick_vars <- thickness_labels$var_label
 data_dir <- 'C:/Users/queen/Box/ABCD Tabulated Data/5.1/core/'
 
 # NOTE: must run entire code chunk
-if(!is.null(data_dir)){
+if (!is.null(data_dir)) {
   setwd(data_dir)
 }
 
@@ -258,8 +263,6 @@ black_male_plot <- centiles_plot(
 white_female_plot + black_male_plot
 ```
 
-
-
 ```{r}
 #| label: additional-prep-for-brain-plots
 #| context: data
@@ -356,8 +359,8 @@ limits_thick <- brain_data |> pivot_longer(
 ) |>
   group_by(var_name) |>
   summarize(
-    min_value = mean(values) - 3*sd(values),
-    max_value = mean(values) + 3*sd(values)
+    min_value = mean(values) - 4*sd(values),
+    max_value = mean(values) + 4*sd(values)
   )
 
 # demographic combinations matrix for area variables
@@ -402,11 +405,11 @@ demog_brain_combos_thick <- expand.grid(
 # PREPS DATA FOR MODELING
 # EX. SEX = "MALE" AND RACE = "BLACK"
 subset_data <- function(
-    # full dataset
+    # full data set
     brain_data,
-    # xvariable
+    # x variable
     xcol,
-    # yvariable
+    # y variable
     ycol,
     # first variable to filter by
     filter_var1 = NULL,
@@ -424,26 +427,26 @@ subset_data <- function(
     mutate(sex = factor(sex)) |>
     na.omit()
   
-  if(filter_val2 == "All") {
+  if (filter_val2 == "All") {
     filter_var2 = NULL
     filter_val2 = NULL
   }
   
     # subset data
-  if(!is.null(filter_var1) & !is.null(filter_val1) & is.null(filter_var2) & is.null(filter_var2)) {
+  if (!is.null(filter_var1) & !is.null(filter_val1) & is.null(filter_var2) & is.null(filter_var2)) {
     data_subset <- subset(
       brain_data, brain_data[[filter_var1]] == filter_val1)
   }
-  if(!is.null(filter_var2) & !is.null(filter_var2)) {
+  if (!is.null(filter_var2) & !is.null(filter_var2)) {
     data_subset <- subset(
       brain_data, brain_data[[filter_var1]] == filter_val1 & brain_data[[filter_var2]] == filter_val2)
     
   }
-  if(is.null(filter_var1) & is.null(filter_val1) & is.null(filter_var2) & is.null(filter_var2)) {
+  if (is.null(filter_var1) & is.null(filter_val1) & is.null(filter_var2) & is.null(filter_var2)) {
     data_subset <- brain_data
   }
   
-  # creates xvar and yvar columns in dataset
+  # creates x variable and y variable columns in data set
   data_subset$xvar <- data_subset[[xcol]]
   data_subset$yvar <- data_subset[[ycol]]
   
@@ -462,7 +465,7 @@ area_model <- function(data_subset) {
   # finds power transformation for gamlss model
   power <- gamlss::findPower(yvar, xvar, data = data_subset, k = 2)
   
-  # build gamlss model for subsetted data
+  # build GAMLSS model for subset data
   model <- gamlss(
   yvar ~ pb(xvar^power) + gamlss::random(src_subject_id) + gamlss::random(site_id_l),
   sigma.formula = ~pb(xvar),
@@ -502,9 +505,9 @@ yvar_ch <- ycol
 obj = model
 x <- y <- NULL
 
-xvar  <- get(xvar_ch, envir=as.environment(model_data))
+xvar  <- get(xvar_ch, envir = as.environment(model_data))
 fname <- obj$family[1]
-qfun <- paste("q",fname,sep ="")
+qfun <- paste("q",fname,sep = "")
 oxvar <- xvar[order(xvar)]
 oyvar <- obj$y[order(xvar)]
 
@@ -515,17 +518,15 @@ per <- rep(0, length(cent))
 centile_matrix <- matrix(0, ncol = length(cent), nrow = dim(model_data)[1])
 colnames(centile_matrix) <- cent
 
-for(var in cent) {
-  newcall <- call(qfun,var/100,
-                  mu=fitted(obj,"mu")[order(xvar)],
-                     sigma=fitted(obj,"sigma")[order(xvar)],
-                     nu=fitted(obj,"nu")[order(xvar)],
-                     tau=fitted(obj,"tau")[order(xvar)]) 
+for (var in cent) {
+  newcall <- call(qfun, var/100,
+                  mu = fitted(obj,"mu")[order(xvar)],
+                  sigma = fitted(obj,"sigma")[order(xvar)],
+                  nu = fitted(obj,"nu")[order(xvar)],
+                  tau = fitted(obj,"tau")[order(xvar)]) 
     ii <- ii + 1
     centile_matrix[,ii] <- eval(newcall)
 }
-
-#yvar_ch <- paste(obj$call$formula[[2]])
 
 lc <- length(cent)
 centile_data <- data.frame(
@@ -542,13 +543,11 @@ return(centile_data)
 #| context: setup
 #| output: false
 
-
-
 # returns ggplot for given model and data used to create model
 centiles_plot <- function(
-    # gamlss model object
+    # GAMLSS model object
     model,
-    # data used to create gamlss model
+    # data used to create GAMLSS model
     model_data,
     # x variable in data
     xcol,
@@ -573,13 +572,13 @@ centiles_plot <- function(
   # initialize ggplot object
   gg <- ggplot(data = centile_data)
   
-  if(points == TRUE) {
+  if (points == TRUE) {
     gg <- gg + geom_point(aes(x = x, y = y),
              size = 1, alpha = 0.2, show.legend = FALSE, color = "gray")
   }
-  for(i in 1:lc) {
+  for (i in 1:lc) {
     
-    if(c_names[i] == "centile.50") {
+    if (c_names[i] == "centile.50") {
       gg <- gg +
       geom_line(
         aes_string(x = "x", y = c_names[i]),
@@ -624,7 +623,7 @@ save(model_list, file = "area_model_list.RData")
 
 data_list <- list()
 
-for(row in 1:nrow(demog_brain_combos_area)) {
+for (row in 1:nrow(demog_brain_combos_area)) {
   
   my_ycol <- demog_brain_combos_area[row,4]
   
@@ -640,7 +639,6 @@ for(row in 1:nrow(demog_brain_combos_area)) {
 }
 
 ```
-
 
 ```{r}
 #| label: load-models-area
@@ -664,7 +662,7 @@ load("area_model_list.RData")
 
 # create models for each combination of sex and race
 model_list <- list()
-for(row in 1:nrow(demog_brain_combos_area)) {
+for (row in 1:nrow(demog_brain_combos_area)) {
   print(
     paste("FITTING MODEL", row, ":", demog_brain_combos_area[row,2],
           demog_brain_combos_area[row,1], demog_brain_combos_area[row,3]))
@@ -703,11 +701,11 @@ summary(thick_model_list[[1]])
 #| label: thickness-model-data
 #| context: data
 #| eval: true
-#| cache: false
+#| cache: true
 #| cache-lazy: false
 
 thick_data_list <- list()
-for(row in 1:nrow(demog_brain_combos_thick)) {
+for (row in 1:nrow(demog_brain_combos_thick)) {
   
   my_ycol <- demog_brain_combos_thick[row,3]
   
@@ -738,7 +736,7 @@ load("thick_model_list_updated.RData")
 #| eval: false
 
 thick_model_list <- list()
-for(row in 1:1) {
+for (row in 1:1) {
   print(
     paste("FITTING MODEL", row, ":", demog_brain_combos_thick[row,2],
           demog_brain_combos_thick[row,1], demog_brain_combos_thick[row,5]))
@@ -813,25 +811,690 @@ as_gt() |>
 
 # Centile Estimation
 
-Text here
+```{r}
+#| label: data-for-centile-plots
+#| context: data
+#| cache: true
 
-## Column {width="50%"}
+#read in thickness data 
+demog_thick_combos_est <- read.csv("additional data/demog_thick_combos.csv") |> 
+  select(-X) 
+
+thickness_df <- data.frame(read.csv("additional data/full_thickness_df.csv")) |> 
+  select(-X) |> 
+  rename_with(~ sub('^X', '', .))
+
+load("additional data/thickness_parameters.RData")
+
+# load all of the area data 
+demog_area_combos_est <- read.csv("additional data/demog_area_combos.csv") |> 
+  select(-X) 
+
+area_df <- read.csv("additional data/full_area_df.csv") |> 
+  select(-X) |> 
+  rename_with(~ sub('^X', '', .))
+
+load("additional data/area_parameters.RData")
+```
+
+## {.sidebar}
 
 ```{r}
-#| title: "Input Individual Data to Determine Centile"
-#| label: input-data-for-centiles
+#| label: centile-estimation-inputs
+#| panel: sidebar 
 
-print("Hello World")
+selectInput(
+  inputId = "phenotype",
+  label = "Phenotype",
+  choices = c("Cortical Thickness", "Cortical Surface Area")
+  )
+
+selectInput(
+  inputId = "hemi",
+  label = "Hemisphere",
+  choices = c("left", "right", "both"),
+  selected = c("both")
+  )
+
+selectInput(
+  inputId = "region",
+  label = "Area of Brain",
+  choices = c(unique(demog_thick_combos_est$region)),
+  selected = "all"
+  )
+
+checkboxGroupInput(
+  inputId = "centiles", 
+  label = "Centile Selections", 
+  choices = c(0.4, 2, 2.5, 10, 25, 50, 75, 90, 97.5, 98, 99.6), 
+  selected = c(2.5, 50, 97.5)
+  )
+
+selectInput(
+  inputId = "race",
+  label = "Race",
+  choices = c("White", "Black", "Hispanic", "Asian", "Other", "All"),
+  selected = "All"
+  )
+
+selectInput(
+  inputId = "sex",
+  label = "Sex",
+  choices = c("Male", "Female"),
+  selected = "Female"
+  )
+```
+
+
+## {.row}
+## Row { height = 20%}
+
+### Column {width = 25%}
+
+**Note: Gaps in centile curves represent ages (by months) for which we don't have data. Leave values for which you don't have data as 0. 
+
+```{r}
+#| label: input-birthday-centiles
+
+dateInput(
+  inputId = "birthday",
+  label = "Date of Birth (yyyy/mm/dd)"
+  )
+```
+
+### Column {width = 25%}
+
+```{r}
+#| label: input-visit-dates-centiles
+
+dateInput(
+  inputId = "baseline_date",
+  label = "Date of Baseline Visit"
+  )
+
+numericInput(
+  inputId = "baseline_input",
+  label = "Baseline Value (mm)",
+  value = 0
+  )
+```
+
+### Column {width = 25%}
+```{r}
+#| label: input-visit-dates-centiles-2
+
+dateInput(
+  inputId = "year2_date",
+  label = "Date of Year 2 Follow-up"
+  )
+
+numericInput(
+  inputId = "year2_input",
+  label = "Year 2 Value (mm)",
+  value = 0
+  )
+```
+
+### Column {width = 25%}
+```{r}
+#| label: input-visit-dates-centiles-4
+
+dateInput(
+  inputId = "year4_date", 
+  label = "Date of Year 4 Follow-up"
+  )
+
+numericInput(
+  inputId = "year4_input", 
+  label = "Year 4 Value (mm)", 
+  value = 0
+  )
+```
+
+## Row {height = 80%}
+
+```{r}
+#| label: output-centile-plot
+
+plotOutput("ctplot")
+```
+
+```{r}
+#| label: elapsed-months-function
+#| context: setup
+
+elapsed_months <- function(end_date, start_date) {
+    ed <- as.POSIXlt(end_date)
+    sd <- as.POSIXlt(start_date)
+    12 * (ed$year - sd$year) + (ed$mon - sd$mon)
+}
+```
+
+```{r}
+#| label: draw-centiles-function
+#| context: setup
+
+#function to make centile curves
+draw_centiles <- function(
+    race_input,
+    sex_input,
+    hemisphere_input,
+    region_input,
+    centiles_input,
+    phenotype_input
+    ) { 
+  
+  #define dataframe based on phenotype input 
+  working_df <- if (phenotype_input == "Cortical Thickness") { 
+    thickness_df
+  }
+  else {area_df}
+
+  #get df for region/group that we want 
+  curr_df <- working_df |>
+  filter(race == race_input, sex == sex_input, region == region_input) |>
+  pivot_longer(
+    cols = c(`107`:`189`), 
+    names_to = "interview_age",
+    values_to = "thickness"
+    ) |> 
+  filter(centile %in% as.vector(centiles_input)) |> 
+  mutate(interview_age = as.numeric(interview_age),
+         centile = as.factor(centile), 
+         hemisphere = as.factor(hemisphere)) 
+  
+    #provision for hemispheres
+  if (hemisphere_input %in% c("right", "left") | region_input == "all") { 
+    curr_df <- curr_df |> filter(hemisphere == hemisphere_input)
+    hemi_legend <- "none"}  else { hemi_legend <- NULL}
+  
+  #initialize ggplot object
+  gg <- ggplot(data = curr_df) 
+  
+  #now add for every centile we wanna plot 
+  gg <- gg + geom_line(aes(x = interview_age, y = thickness, color = centile, 
+                           linetype = hemisphere), linewidth = 1.45)
+  
+  title <- if (race_input == "Other") {
+    paste("Centile Curves for", sex_input,
+      "Adolescents whose Race is not Listed (??)")
+  }
+  else {
+    paste("Centile Curves for", race_input, sex_input, "Adolescents")
+  }
+  
+  gg <- gg + 
+    theme_minimal() + 
+    labs(title = title)  + 
+    scale_color_manual(
+      values = c(`0.4` = "#A30015", `2` = "#E97451", `2.5` = "#FFD700", 
+                 `10` = "#379634", `25` = "#124019", `50` = "#11686A",
+                 `75` = "#08A4BD", `90` = "#C185B2", `97.5` = '#B91372',
+                 `98` = '#63264A', `99.6` = '#E2B4BD')) + 
+    theme(legend.position = "bottom") + 
+    theme(plot.title = element_text(face = "italic", size = 18), 
+          axis.title = element_text(size = 15), 
+          axis.text = element_text(size = 13), 
+          legend.text = element_text(size = 13), 
+          legend.title = element_text(size = 15)) + 
+    guides(linetype = hemi_legend) + 
+    scale_x_continuous(breaks = c(108,120,132,144, 156, 168,180),
+                     labels = c(9,10,11,12,13,14,15)) + 
+    xlab("Adolescent Age (Years)") + 
+    ylab("Cortical Thickness (mm)") 
+  
+  
+  return(gg)
+    }
+```
+
+```{r}
+#| label: calculate-centile-function
+#| context: setup
+
+#function to calculate centile values
+
+calculate_centile <- function(
+  race_input,
+  sex_input,
+  age_input,
+  region_input,
+  hemisphere_input, 
+  thickness_input,
+  phenotype_input
+  ) { 
+  
+  demog_brain_combos <- if (phenotype_input == "Cortical Thickness") { 
+    demog_thick_combos_est
+  } else {
+      demog_area_combos_est
+    }
+  
+
+  
+  phenotype_parameters <- if (phenotype_input == "Cortical Thickness") { 
+    thickness_parameters } 
+  else { area_parameters}
+  
+  pfun <- if (phenotype_input == "Cortical Thickness") { 
+    "pBCTo"} else { "pBCPEo"}
+  
+  # need to make provision for if user is looking at both hemispheres
+  # (and not at the full brain)
+  if (!(hemisphere_input == "right" | hemisphere_input == "left") &
+          region_input != "all") { 
+    
+    indices <- which(
+      demog_brain_combos$sex == sex_input &
+      demog_brain_combos$race_ethnicity == race_input &
+      demog_brain_combos$region == region_input)
+    
+    parameters_df <- list(
+      phenotype_parameters[[indices[1]]], phenotype_parameters[[indices[2]]])
+    
+   }
+  
+  else { 
+      
+     index <- which(
+        demog_brain_combos$sex == sex_input &
+        demog_brain_combos$race_ethnicity == race_input &
+        demog_brain_combos$region == region_input &
+        demog_brain_combos$hemisphere == hemisphere_input)
+  
+    parameters_df <- list(phenotype_parameters[[index]])
+    
+  }
+  
+  #if we don't have parameters for the age input round down to the nearest age
+  if (!(age_input %in% as.vector(parameters_df[[1]]$x))) {
+    age_index <- which(abs(as.vector(parameters_df[[1]]$x) - age_input) == 
+                           min(abs((parameters_df[[1]]$x - age_input))))
+    
+    age_input <- min(parameters_df[[1]]$x[age_index])
+  } 
+  
+  #get index for specific age 
+  age_index <- which(parameters_df[[1]]$x == age_input)
+  
+  final_centiles <- c()
+  for (index in 1:length(parameters_df)) { 
+    curr_param_df <- parameters_df[[index]]
+    mu <- curr_param_df$mu[age_index]
+    sigma <- curr_param_df$sigma[age_index] 
+    nu <- curr_param_df$nu[age_index]
+    tau <- curr_param_df$tau[age_index]
+    
+    curr_centile <- call(pfun, q = thickness_input, mu = mu, sigma = sigma,
+                         nu = nu, tau = tau)
+    curr_centile <- eval(curr_centile)
+    curr_centile <- round(curr_centile, digits = 5)
+    final_centiles[index] <- curr_centile*100
+    
+    }
+  
+  
+  return(final_centiles)
+  
+}
+```
+
+
+```{r}
+#| label: render-individualized-centile-plot
+#| context: server
+
+output$ctplot <- renderPlot({ 
+  
+  
+  #initialize stuff
+  timepoints <- c("baseline", "year 2", "year 4")
+  values <- c(input$baseline_input, input$year2_input, input$year4_input)
+  
+  #define age in months
+  
+  baseline_age_input <- elapsed_months(input$baseline_date, input$birthday)
+  year2_age <- elapsed_months(input$year2_date, input$birthday) 
+  year4_age <- elapsed_months(input$year4_date, input$birthday)
+  ages <- c(baseline_age_input, year2_age, year4_age)
+  
+  #extract the ages + centiles + values for which we will be calculating 
+  
+  value_indices <- as.vector(which(values != 0))
+  timepoints <- timepoints[value_indices]
+  values_calc <- values[value_indices]
+  ages_calc <- ages[value_indices]
+  race <- input$race 
+  sex <- input$sex 
+  region <- input$region 
+  hemi <- input$hemi
+  phenotype <- input$phenotype
+  
+  if (!(hemi %in% c("left", "right")) & region != "all") { 
+    hemi_labels <- c("left", "right")}
+  else { hemi_labels <- NULL}
+  
+  #provisions for diff plot sizes 
+  
+  label_spacer <- if (phenotype == "Cortical Thickness") { 
+    c(0.1, -0.1) }
+    else if (phenotype == "Cortical Surface Area" & region != "all") {
+    c(100, -100) }
+    else {c(10000, -10000)}
+  
+  
+  #base centile plot 
+  gg <- draw_centiles(
+    race_input = race,
+    sex_input = sex,
+    hemisphere_input = hemi,
+    region_input = region,
+    centiles_input = input$centiles,
+    phenotype_input = phenotype
+    )
+  
+  
+  #define centiles and round them to four digits and put them in a list 
+  #if we're calculating both hemispheres then we want to do this for 
+  centile_values <- c()
+  
+  if (length(value_indices) != 0) { 
+
+    for (i in 1:length(value_indices)) { 
+      curr_centile <- calculate_centile(
+        race_input = race,
+        sex_input = sex,
+        age_input = ages_calc[i], 
+        region_input = region,
+        hemisphere_input = hemi,
+        thickness_input = values_calc[i],
+        phenotype_input = phenotype)
+      curr_centile <- round(curr_centile, digits = 4)
+      centile_values[[i]] <- curr_centile
+    
+      }
+  
+  # if we get both hemispheres it looks like  c([0.34, 1.290], [94, 32])
+  #add user points & centile estimates to the plot 
+
+    for (i in 1:length(value_indices)) { 
+      timepoint <- timepoints[i]
+      curr_centile <- centile_values[[i]]
+    
+      gg <- gg +
+        annotate("point", x = ages_calc[i], y = values_calc[i], size = 3,
+          color = "#05668D")
+    
+    #default is for the left centile label to be displayed above the right one
+    #but if the left centile value is bigger it means that the left curve is below the right one so switch it to the bottom 
+      if (length(curr_centile) > 1 & curr_centile[1] > curr_centile[2]) { 
+        label_spacer <- list.reverse(label_spacer)}
+    
+      for (hemi_index in 1:length(hemi_labels)) { 
+        gg <- gg +
+          annotate("label", x = ages_calc[i], y = values_calc[i] +
+            label_spacer[hemi_index], size = 5,
+          label = (paste(timepoint, hemi_labels[hemi_index], "centile:", "\n",
+                      curr_centile[hemi_index])))
+      }
+    }
+    
+    # and line segments connecting the points if we have 2+ points 
+    if (length(value_indices) > 1) {
+      for (i in 1:length(value_indices)-1) {
+        gg <- gg +
+          annotate("segment", x = ages_calc[i], y = values_calc[i],
+            xend = ages_calc[i+1], yend = values_calc[i+1], color = "#4C4B63",
+              size = 1.25, linetype = 3)
+      }
+    }
+    
+  }
+  
+  gg
+  
+  })
+```
+
+# Spatial Visualization
+
+## {.sidebar}
+
+```{r}
+#| panel: sidebar
+#| label: sidebar-brain-inputs
+
+model_xvars <- c(107:189)
+
+selectInput(
+  inputId = "statistic", 
+  label = "What do you want to see?", 
+  choices = c("Scaled Regional Max Ratio", "Raw Data")
+  )
+
+sliderInput(
+  "age",
+  "Adolescent Age (months)",
+  min = min(model_xvars),
+  max = max(model_xvars),
+  value = 120
+  )
+
+selectInput(
+  inputId = "phenotype",
+  label = "Phenotype",
+  choices = c("Cortical Thickness", "Cortical Surface Area"),
+  selected = "Cortical Thickness"
+  )
+
+checkboxGroupInput(
+  inputId = "centiles",
+  label = "Centile Selections",
+  choices = c(0.4, 2, 2.5, 10, 25, 50, 75, 90, 97.5, 98, 99.6),
+  selected = c(2.5, 50, 97.5)
+  )
+
+selectInput(
+  inputId = "race", 
+  label = "Race", 
+  choices = c("White", "Black", "Hispanic", "Asian", "Other", "All"), 
+  selected = "All"
+  )
+
+selectInput(
+  inputId = "sex", 
+  label = "Sex", 
+  choices = c("Male", "Female"), 
+  selected = "Female"
+  )
+
+selectInput(
+  inputId = "hemi",
+  label = "Hemisphere",
+  choices = c("left", "right", "Both"),
+  selected = c("Both")
+  )
 
 ```
 
-## Column {width="50%"}
+## Row {height=100%}
 
 ```{r}
-#| title: "Determine Centiles for Subpopulation"
-#| label: subpop-centiles
+#| label: output-spatial-visualizations
+#| panel: fill
 
-print("Hello World")
+plotOutput('brainPlot')
+```
+
+```{r}
+#| label: log-ratio-function
+#| context: setup
+
+log_ratio <- function(orig_df) {
+  
+ peak_df1 <- orig_df |> 
+  group_by(region, hemisphere, sex, race) |> 
+  pivot_longer(cols = `107`:`189`, names_to = "age", values_to = "value") |> 
+  summarize(region_max = max(value, na.rm = TRUE),
+            .groups = 'rowwise') |> 
+  right_join(thickness_df, by = c("region", "sex", "race", "hemisphere"))
+
+  long_df <- orig_df |>
+    pivot_longer(cols = `107`:`189`, names_to = "age", values_to = "value") |>
+    left_join(peak_df1 |> select(region, sex, race, hemisphere, centile, region_max), 
+              by = c("region", "sex", "race", "hemisphere", "centile")) |>
+    mutate(ratio = region_max / value)
+
+  log_maxes <- long_df |>
+    select(region, centile, hemisphere, sex, race, age, ratio) |>
+    pivot_wider(names_from = age, values_from = ratio) |> 
+    mutate(across(`107`:`189`, log, .names = "log_{.col}"))
+  
+  #final df
+  final_df <- log_maxes |>
+    select(region, hemisphere, sex, race, centile, starts_with("log_")) |> 
+    rename_with(~ sub("^log_", "", .), starts_with("log_"))
+  
+  return(final_df)
+}
+```
+
+```{r}
+#| label: plot-centile-function-brains
+#| context: setup
+
+#makes a plot for a specific centile + race/sex combo 
+plot_centile <- function(centile_input, age_input, race_input, sex_input, 
+                         statistic_input, phenotype_input, hemi_input){ 
+
+    #take log ratios
+    thickness_logs <- log_ratio(thickness_df)
+    area_logs <- log_ratio(area_df)  
+  
+ 
+  #define dataframe based on what user wants to see 
+   working_df <- if (statistic_input == "Raw Data") {
+    if(phenotype_input == "Cortical Thickness"){thickness_df
+    }
+    else {area_df}
+    }
+    else {
+      if(phenotype_input == "Cortical Thickness"){
+        thickness_logs
+      }
+      else {area_logs}
+    }
+   
+  
+  #define limits based on input 
+  pheno_limits <- if (statistic_input == "Scaled Regional Max Ratio") { 
+    if (phenotype_input == "Cortical Thickness") {
+   c(0, 0.35) } else { c(0, 1)}
+    } else if (phenotype_input == "Cortical Thickness") { 
+    c(1.3, 4)
+  } else { 
+      c(0, 15000)}
+  
+  
+  legend_name <- if(statistic_input == "Scaled Regional Max Ratio"){ 
+    "log(max/centile value)"} else { 
+      if(phenotype_input == "Cortical Thickness"){
+        "cortical thickness (mm)"} 
+      else{
+        "cortical surface area (mm^2)"
+      }
+      }
+  
+   #define geom brain object depending on hemisphere input
+  
+   geom_brain_obj <- if (hemi_input == "Both") {
+    geom_brain(atlas = dk, aes(fill = values))
+  } else {
+   geom_brain(atlas = dk, 
+              hemi = as.character(hemi_input), 
+               aes(fill = values))
+  }
+  
+  working_df <- working_df |> 
+    filter(race == race_input, sex == sex_input) |> 
+    filter(centile == centile_input) 
+  
+  working_df$values <- working_df[[age_input]]
+  
+  
+
+  #make title make sense for "2nd" 
+  if(centile_input == 2){ 
+    plot_title <- "2nd percentile"
+    } else { plot_title <- paste(centile_input, "th percentile", sep = "")}
+  
+  plot <- working_df |> 
+    ggplot() + 
+    geom_brain_obj + 
+    scale_fill_gradientn( 
+      name = legend_name, 
+      colors = turbo(45), 
+      limits = pheno_limits) + 
+    labs(title = plot_title) + 
+    theme_void()
+  
+  
+  return(plot)
+  
+  }
+```
+
+```{r}
+#| label: plot-centiles-function-brains
+#| context: setup
+
+plot_centiles <- function(centiles_input, age_input, race_input, sex_input, 
+                          statistic_input, phenotype_input, hemi_input){ 
+  plot_outputs <- c()
+  
+  age_years <- round(as.numeric(age_input)/12, digits = 4)
+  
+  for(i in 1:length(centiles_input)){ 
+    curr_centile <- centiles_input[i] 
+    plot <- plot_centile(curr_centile, age_input, race_input, sex_input, 
+                         statistic_input, phenotype_input, hemi_input)
+    plot_outputs[[i]] <- plot
+    }
+  
+
+
+  if(race_input == "All" & sex_input != "All") { 
+    title <- paste("Centile Visualizations for all", sex_input, "Adolescents --", age_input, "Months")}
+  if(race_input != "All" & sex_input != "All"){ 
+    title <- paste("Centile Visualizations for", race_input, sex_input, "Adolescents --", age_years, "Years")}
+  
+  
+  nCol = floor(sqrt(length(centiles_input)))
+  #top_text <- text_grob(title, gp = gpar(fontsize = 15, font = 8))
+  
+  final_plot <- do.call("grid.arrange", 
+                        c(plot_outputs, ncol=nCol, top = title))
+  
+  return(final_plot)
+  
+}
+```
+
+```{r}
+#| context: server
+#| label: render-brain-plots
+
+output$brainPlot <- renderPlot({
+
+  plot_centiles(
+    centiles_input = input$centiles,
+    age_input = as.character(input$age),
+    race_input = input$race,
+    sex_input = input$sex,
+    statistic_input = input$statistic,
+    phenotype_input = input$phenotype,
+    hemi_input = input$hemi)
+  })
 
 ```
 
@@ -1035,7 +1698,6 @@ checkboxGroupInput(
 
 ```
 
-
 ## Row
 
 ```{r}
@@ -1173,3 +1835,4 @@ output$area_centile_plot_2 <- renderPlot({
 })
 ```
 
+# About Us
