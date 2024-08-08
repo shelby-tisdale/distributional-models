@@ -1,0 +1,705 @@
+---
+title: "ABCD Data Prep"
+format: html
+---
+
+# Load Data and Packages
+
+```{r}
+#| label: load-packages
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(reshape2)
+library(bamlss)
+library(distreg.vis)
+library(bayesplot)
+library(tidybayes)
+library(broom.mixed)
+library(rstanarm)
+```
+
+```{r}
+#| label: input-vars-for-data
+#| warning: false
+
+# location of Box data directory
+# for Shelby
+data_dir <- 'C:/Users/queen/Box/ABCD Tabulated Data/5.1/core/'
+
+# for Nichole
+# data_dir <- "/Users/nicholezhang/Library/CloudStorage/Box-Box/ABCD Tabulated Data/5.1/core"
+
+# data_dir <- NULL
+
+
+# output directory
+out_dir <- NULL
+# output date
+out_date <- NULL
+# output initials
+out_initials <- ""
+# output wide format data
+wide <- TRUE
+# output variables for wide data format
+wide_vars <- NULL 
+```
+
+```{r}
+#| label: load-data
+#| warning: false
+
+# NOTE: must run entire code chunk
+if(!is.null(data_dir)){
+  setwd(data_dir)
+}
+
+# LOAD DATA
+# Demographic variables and propensity weights
+demog <- read.csv("abcd-general/abcd_p_demo.csv", na.strings = c("999", "777"))
+# Age in months, Site ID (ABCD Study Design Variables), Family ID
+study_covars <- read.csv("abcd-general/abcd_y_lt.csv")
+# desikan atlas, cortical thickness
+dat.mri = read.csv('imaging/mri_y_smr_thk_dsk.csv') |>
+  select(src_subject_id, eventname, smri_thick_cdk_mean)
+# desikan atlas, cortical surface area
+dat.mri.area = read.csv('imaging/mri_y_smr_area_dst.csv')
+```
+
+```{r}
+#| label: demographic-data-cleaning
+
+# filter for events of interest
+demog_clean <- demog |>
+  filter(eventname %in% c(
+    "baseline_year_1_arm_1",
+    "2_year_follow_up_y_arm_1",
+    "4_year_follow_up_y_arm_1")) |>
+  # select relevant variables
+   select(
+     src_subject_id,
+     eventname,
+     starts_with("demo_brthdat_v2"),
+     demo_sex_v2,
+     starts_with("demo_gender_id_v2"),
+     starts_with("demo_race_a_p___"),
+     starts_with("demo_ethn"),
+     demo_prnt_years_us_v2,
+     starts_with("demo_prnt_marital_v2"),
+     starts_with("demo_prnt_ed_v2"),
+     starts_with("demo_prnt_income_v2"),
+     starts_with("demo_prnt_prtnr_v2"),
+     starts_with("demo_prnt_prtnr_bio"),
+     starts_with("demo_prnt_prtnr_adopt"),
+     starts_with("demo_prtnr_ed_v2"),
+     starts_with("demo_prtnr_income_v2"),
+     starts_with("demo_comb_income_v2"),
+     starts_with("demo_med_insur"),
+     starts_with("demo_ethn"),
+     demo_biofather_v2,
+     demo_biomother_v2,
+     race_ethnicity,
+     acs_raked_propensity_score
+     ) 
+
+# pivot data for race recoding
+demog_baseline_long <- demog_clean |>
+  # pivot race variables
+  pivot_longer(cols = starts_with("demo_race_a_p___"),
+               names_to = "race",
+               values_to = "is_race",
+               values_drop_na = TRUE,
+               names_prefix = "demo_race_a_p___") |>
+ # select(race, is_race, src_subject_id) |>
+  filter(is_race != 0 | is.na(is_race)) |>
+  mutate(race = case_match(
+    race,
+    "10" ~ "White",
+    "11" ~ "Black",
+    "12" ~ "Native American",
+    "13" ~ "Alaskan Native",
+    "14" ~ "Native Hawaiian",
+    "15" ~ "Guamanian",
+    "16" ~ "Samoan",
+    "17" ~ "Other Pacific Islander",
+    "18" ~ "Asian Indian",
+    "19" ~ "Chinese",
+    "20" ~ "Filipino",
+    "21" ~ "Japanese",
+    "22" ~ "Korean",
+    "23" ~ "Vietnamese",
+    "24" ~ "Other Asian Race",
+    "25" ~ "Other Race",
+    .default = NA
+  )) |>
+  distinct() |>
+  group_by(src_subject_id) |>
+  mutate(order = row_number()) |>
+  ungroup()
+
+# reformat wide and continue cleaning
+demog_baseline_wide <- demog_baseline_long |>
+  pivot_wider(names_from = order, values_from = race, values_fill = NA, names_prefix = "race_") |>
+   #clean hispanic origin variable 
+  mutate(
+    hispanic_origin = case_match(
+      demo_ethn_v2,
+      1 ~ "Hispanic or Latino",
+      2 ~ "Not Hispanic or Latino",
+      .default = NA),
+    hispanic_origin_spec = case_match(
+    demo_ethn2_v2, 
+    10 ~ "(Puerto Rican)", 
+    12 ~ "(Dominican)",
+    13 ~ "(Mexican)", 
+    14 ~ "(Mexican American)", 
+    15 ~ "(Chicano)", 
+    18 ~ "(Cuban)", 
+    19 ~ "(Cuban American)", 
+    20 ~ "(Central or South American)", 
+    40 ~ "(Other Latin American origin)", 
+    41 ~ "(Other Hispanic)", 
+    .default = NA),
+    sex = factor(demo_sex_v2),
+    sex = fct_recode(
+      sex,
+      "Male" = "1",
+      "Female" = "2",
+      "Intersex-Male" = "3"
+    )) |>
+  rename(
+    parent_years_us_baseline = demo_prnt_years_us_v2
+  ) |>
+  select(src_subject_id, race_1:race_5, hispanic_origin, hispanic_origin_spec, sex, parent_years_us_baseline)
+
+demog_clean <- demog_clean |>
+ mutate(
+    # clean age variable
+    age = case_when(
+      eventname == "baseline_year_1_arm_1" ~ trunc(demo_brthdat_v2), # remove decimals 
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ trunc(demo_brthdat_v2_l)),
+    # clean gender id
+    gender_id = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_gender_id_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_gender_id_v2_l),
+    gender_id = case_match(
+      gender_id,
+      1 ~ "Male",
+      2 ~ "Female",
+      3 ~ "Trans male",
+      4 ~ "Trans female",
+      5 ~ "Genderqueer",
+      6 ~ "Other"
+    ),
+    # parent marital status variable
+    parent_marital_status = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_marital_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_marital_v2_l
+    ),
+    parent_marital_status = case_match(
+      parent_marital_status,
+      1 ~ "Married",
+      2 ~ "Widowed",
+      3 ~ "Divorced",
+      4 ~ "Separated",
+      5 ~ "Never Married",
+      6 ~ "Living with Partner"),
+    # parent education variable
+    parent_ed = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_ed_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_ed_v2_2yr_l
+    ),
+    parent_ed = case_match(
+      parent_ed,
+      0 ~ "Never attended / Kindergarten",
+      1 ~ "1st Grade",
+      2 ~ "2nd Grade",
+      3 ~ "3rd Grade",
+      4 ~ "4th Grade",
+      5 ~ "5th Grade",
+      6 ~ "6th Grade",
+      7 ~ "7th Grade",
+      8 ~ "8th Grade",
+      9 ~ "9th Grade",
+      10 ~ "10th Grade",
+      11 ~ "11th Grade",
+      12 ~ "12th Grade - No Diploma",
+      13 ~ "High School Graduate",
+      14 ~ "GED or Equivalent",
+      16 ~ "Associate Degree: Occupational, Technical or Vocational",
+      17 ~ "Associate Degree: Academic Program",
+      18 ~ "Bachelor's Degree",
+      19 ~ "Master's Degree",
+      20 ~ "Professional School Degree",
+      21 ~ "Doctoral Degree",
+      22 ~ "Less than 1 year of college",
+      23 ~ "One year or more of college credit - no degree"
+    ),
+    # parent income variable
+    parent_income = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_income_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_income_v2_l),
+    parent_income = case_match(
+      parent_income,
+        1 ~ "Less than $5,000",
+        2 ~ "$5,000 to $11,999",
+        3 ~ "$12,000 to $15,999",
+        4 ~ "$16,000 to $24,999",
+        5 ~ "$25,000 to $34,999",
+        6 ~ "$35,000 to $49,999",
+        7 ~ "$50,000 to $74,999",
+        8 ~ "$75,000 to $99,999",
+        9 ~ "$100,000 to $199,999",
+        10 ~ "$200,000 and over"
+      ),
+    # parent partner information
+    parent_partner = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_prtnr_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_prtnr_v2_l),
+    parent_partner = if_else(parent_partner == 1, 1, 0),
+    parent_partner_bio = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_prtnr_bio,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_prtnr_bio_l),
+    parent_partner_bio = if_else(parent_partner_bio == 1, 1, 0),
+    parent_partner_adopt = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prnt_prtnr_adopt,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prnt_prtnr_adopt_l),
+    parent_partner_adopt = if_else(parent_partner_adopt == 1, 1, 0),
+    parent_partner_ed = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prtnr_ed_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prtnr_ed_v2_2yr_l
+    ),
+    parent_partner_ed = case_match(
+      parent_partner_ed,
+      0 ~ "Never attended / Kindergarten",
+      1 ~ "1st Grade",
+      2 ~ "2nd Grade",
+      3 ~ "3rd Grade",
+      4 ~ "4th Grade",
+      5 ~ "5th Grade",
+      6 ~ "6th Grade",
+      7 ~ "7th Grade",
+      8 ~ "8th Grade",
+      9 ~ "9th Grade",
+      10 ~ "10th Grade",
+      11 ~ "11th Grade",
+      12 ~ "12th Grade - No Diploma",
+      13 ~ "High School Graduate",
+      14 ~ "GED or Equivalent",
+      16 ~ "Associate Degree: Occupational, Technical or Vocational",
+      17 ~ "Associate Degree: Academic Program",
+      18 ~ "Bachelor's Degree",
+      19 ~ "Master's Degree",
+      20 ~ "Professional School Degree",
+      21 ~ "Doctoral Degree",
+      22 ~ "Less than 1 year of college",
+      23 ~ "One year or more of college credit - no degree"
+    ),
+    parent_partner_income = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prtnr_income_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prtnr_income_v2_l),
+    parent_partner_income = case_match(
+      parent_partner_income,
+        1 ~ "Less than $5,000",
+        2 ~ "$5,000 to $11,999",
+        3 ~ "$12,000 to $15,999",
+        4 ~ "$16,000 to $24,999",
+        5 ~ "$25,000 to $34,999",
+        6 ~ "$35,000 to $49,999",
+        7 ~ "$50,000 to $74,999",
+        8 ~ "$75,000 to $99,999",
+        9 ~ "$100,000 to $199,999",
+        10 ~ "$200,000 and over"
+      ),
+    parent_partner_income = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_prtnr_income_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_prtnr_income_v2_l),
+    parent_partner_income = case_match(
+      parent_partner_income,
+        1 ~ "Less than $5,000",
+        2 ~ "$5,000 to $11,999",
+        3 ~ "$12,000 to $15,999",
+        4 ~ "$16,000 to $24,999",
+        5 ~ "$25,000 to $34,999",
+        6 ~ "$35,000 to $49,999",
+        7 ~ "$50,000 to $74,999",
+        8 ~ "$75,000 to $99,999",
+        9 ~ "$100,000 to $199,999",
+        10 ~ "$200,000 and over"
+      ),
+    combined_income = case_when(
+      eventname == "baseline_year_1_arm_1" ~ demo_comb_income_v2,
+      eventname %in% c(
+        "2_year_follow_up_y_arm_1", "4_year_follow_up_y_arm_1"
+        ) ~ demo_comb_income_v2_l),
+    combined_income = case_match(
+      combined_income,
+        1 ~ "Less than $5,000",
+        2 ~ "$5,000 to $11,999",
+        3 ~ "$12,000 to $15,999",
+        4 ~ "$16,000 to $24,999",
+        5 ~ "$25,000 to $34,999",
+        6 ~ "$35,000 to $49,999",
+        7 ~ "$50,000 to $74,999",
+        8 ~ "$75,000 to $99,999",
+        9 ~ "$100,000 to $199,999",
+        10 ~ "$200,000 and over"
+      ),
+    race_ethnicity = case_match(
+      race_ethnicity,
+      1 ~ "White",
+      2 ~ "Black",
+      3 ~ "Hispanic",
+      4 ~ "Asian",
+      5 ~ "Other"
+    )
+    ) |>
+  select(
+    -demo_prnt_years_us_v2,
+    -starts_with("demo_comb_income"),
+    -starts_with("demo_prtnr_income"),
+    -starts_with("demo_prtnr_ed"),
+    -starts_with("demo_prnt_prtnr"),
+    -starts_with("demo_ethn"),
+    -starts_with("demo_race"),
+    -starts_with("demo_brthdat"),
+    -starts_with("demo_gender_id"),
+    -demo_sex_v2,
+    -starts_with("demo_prnt_marital"),
+    -starts_with("demo_prnt_ed"),
+    -starts_with("demo_prnt_income")) |>
+  left_join(demog_baseline_wide, join_by("src_subject_id")) |>
+  unite("race", race_1:race_5, sep = ", ", na.rm = TRUE) #|>
+ # unite("hispanic_origin", c(hispanic_origin, hispanic_origin_spec), sep = " ", na.rm = TRUE)
+
+
+races <- demog_clean |>
+  filter(eventname == "2_year_follow_up_y_arm_1") |>
+  select(src_subject_id, race, race_ethnicity, hispanic_origin) |>
+  mutate(race = factor(race),
+         race = fct_collapse(
+           race,
+           "Black, Native American" = c("White, Black, Native American", "Black, Native American", "White, Black, Native American, Other Race", "Black, Native American, Other Race", "Black, Native American, Other Pacific Islander", "White, Black, Native American, Other Pacific Islander"),
+           "Black" = c("Black", "Black, Other Race")
+           )) |>
+  distinct() |>
+  count(race) |>
+  filter(race != "") |>
+  drop_na() |>
+  arrange(desc(n))
+```
+
+```{r}
+#| label: lets-make-some-priors
+
+thickness <- dat.mri |>
+  right_join(demog_clean, by = join_by("eventname", "src_subject_id")) |>
+  left_join(study_covars, by = join_by("eventname", "src_subject_id")) |>
+  select(src_subject_id, eventname, smri_thick_cdk_mean, age, sex, site_id_l, race, race_ethnicity, combined_income, interview_age) |>
+  filter(age < 16 & age > 8)
+
+
+thickness |>
+  ggplot(aes(x = age, y = smri_thick_cdk_mean)) +
+  geom_jitter(alpha = 0.5) +
+  geom_smooth(method = "loess")
+  
+
+thickness |>
+  ggplot() +
+  geom_boxplot(aes(x = factor(age), y = smri_thick_cdk_mean))
+
+thickness |>
+  #filter(!is.na(sex) & !is.na(race_ethnicity)) |>
+  #filter(race %in% c("White", "Black", "Chinese", "White, Black", "Asian Indian", "Native American", "White, Other Race")) |>
+  ggplot() +
+  geom_density(aes(x = smri_thick_cdk_mean, color = factor(age)))
+
+thickness |>
+  drop_na() |>
+  summarize(var = (sd(smri_thick_cdk_mean))^2,
+            mean = mean(smri_thick_cdk_mean))
+
+
+# using bamlss code to create simple example
+set.seed(841)
+# model specification
+model1 <- bamlss(
+  smri_thick_cdk_mean ~ age + sex + race_ethnicity + site_id_l,
+  data = thickness,
+  family = "gaussian",
+  # longitudinal vars - doesn't work
+  timevar = "age",
+  idvar = "src_subject_id")
+
+summary(model1)
+samples <- data.frame(model1$samples[[1]]) |>
+  mutate(iteration = seq.int(nrow(samples)))
+
+samples |>
+  ggplot(aes(x = iteration, y = mu.p..Intercept.)) +
+  geom_line() +
+  theme_minimal()
+
+samples |>
+  ggplot(aes(x = iteration, y = sigma.p..Intercept.)) +
+  geom_line() +
+  theme_minimal()
+
+#plot(model1, which = "samples")
+summary(model1)
+confint(model1)
+distreg.vis::vis()
+
+nd <- data.frame("age" = seq(min(thickness$age), max(thickness$age), length = 100))
+
+nd$page <- predict(model1, newdata = nd, model = "mu", term = "age", FUN = c95, intercept = FALSE)
+par(mfrow = c(1, 1))
+ylim <- range(c(nd$page))
+plot2d(page ~ age, data = nd, ylim = ylim)
+
+```
+
+```{r}
+#| label: hierarchical-model-practice
+
+# get mean and variance for cortical thickness by age
+thickness |>
+  group_by(interview_age) |>
+  summarize(
+    mean_thick = mean(smri_thick_cdk_mean, na.rm = TRUE),
+    var_thick = var(smri_thick_cdk_mean, na.rm = TRUE)) |>
+  summarize(var(mean_thick))
+
+# sample 50 participants
+sample_ids <- thickness |>
+  select(src_subject_id, interview_age, smri_thick_cdk_mean) |>
+  drop_na() |>
+  select(src_subject_id) |>
+  distinct() |>
+  sample_n(50)
+
+thickness_sample <- thickness |>
+  filter(src_subject_id %in% sample_ids$src_subject_id & !is.na(smri_thick_cdk_mean))
+
+mu_thick_all <- mean(thickness$smri_thick_cdk_mean, na.rm = TRUE)
+sd_thick_all <- sd(thickness$smri_thick_cdk_mean, na.rm = TRUE)
+
+# specify prior
+thickness_model_1_prior <- stan_glmer(
+  # formula
+  smri_thick_cdk_mean ~ age + (1 | src_subject_id),
+  # data and family for prior
+  data = thickness_sample, family = gaussian,
+  # prior distribution for centered global intercept
+  # across all participants
+  prior_intercept = normal(mu_thick_all, sd_thick_all),
+  # prior for beta_1 (rate of decrease for average participant)
+  # educated guess at parameters
+  prior = normal(-0.01, 0.00126),
+  # prior for sigma_0 (variability between participants)
+  prior_aux = exponential(1, autoscale = TRUE),
+  # prior for sigma_y (degree to which cortical thickness fluctuates from regression trend)
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, iter = 10000, seed = 84735,
+  # simulating parameters from the prior, not posterior models
+  prior_PD = TRUE
+)
+
+set.seed(84735)
+
+# 4 plausible prior scenarios for mean regression models
+# for 50 sampled participants
+thickness |>
+  select(src_subject_id, age, smri_thick_cdk_mean) |>
+  drop_na() |>
+  add_fitted_draws(thickness_model_1_prior, n = 4) |>
+  ggplot(aes(x = age, y = smri_thick_cdk_mean)) +
+  geom_line(aes(y = .value, group = paste(src_subject_id, .draw)), alpha = 0.5) +
+  facet_wrap(~.draw)
+
+# distribution of cortical thickness in 100 simulated datasets of cortical thickness
+thickness |>
+  select(src_subject_id, age, smri_thick_cdk_mean) |>
+  drop_na() |>
+  add_predicted_draws(thickness_model_1_prior, n = 100) |>
+  ggplot(aes(x = smri_thick_cdk_mean)) +
+  geom_density(aes(x = .prediction, group = .draw), alpha = 0.5) +
+  xlim(1, 4)
+
+# cortical thickness by age for all 50 participants
+ggplot(thickness_sample, aes(x = age, y = smri_thick_cdk_mean)) +
+  geom_point() +
+  facet_wrap(~src_subject_id)
+
+# simulate posterior
+thickness_model_1 <- update(thickness_model_1_prior, prior_PD = FALSE)
+
+# check prior specifications
+prior_summary(thickness_model_1)
+
+# markov chain diagnostics
+# trace plots
+mcmc_trace(thickness_model_1)
+# density plots
+mcmc_dens_overlay(thickness_model_1)
+# acf plots - insert params
+mcmc_acf(thickness_model_1, pars = c("age"))
+# estimated sample size ratio
+neff_ratio(thickness_model_1)
+# rhat: ratio between combined variability of mcmc chains and within-chain variability
+# ideally rhat = 1
+# rhat > 1 indicates instability
+rhat(thickness_model_1)
+
+# global relationship between thickness and age for average participant
+thickness_summary_1 <- tidy(thickness_model_1, effects = "fixed", conf.int = TRUE, conf.level = .95)
+thickness_summary_1
+
+# intercept and slope for global model
+B0 <- thickness_summary_1$estimate[1]
+B1 <- thickness_summary_1$estimate[2]
+
+# participant-specific relationships between cortical thickness and age
+# posterior summaries of participant-specific intercepts
+participant_summary_1 <- thickness_model_1 |>
+  spread_draws(`(Intercept)`, b[,src_subject_id]) |>
+  mutate(participant_intercept = `(Intercept)` + b) |>
+  select(-`(Intercept)`, -b) |>
+  median_qi(.width = 0.95) |>
+  select(src_subject_id, participant_intercept, .lower, .upper)
+
+# Plot participant-specific models with the global model
+ggplot(thickness_sample, aes(y = smri_thick_cdk_mean, x = age, group = src_subject_id)) +
+  geom_line(alpha = 0) +
+  geom_abline(data = participant_summary_1, color = "gray",
+              aes(intercept = participant_intercept, slope = B1)) + 
+  geom_abline(intercept = B0, slope = B1, color = "blue")
+
+# between- and within- participant variability
+thickness_sigma <- tidy(thickness_model_1, effects = "ran_pars")
+thickness_sigma
+
+sigma_0 <- thickness_sigma[1,3]
+sigma_y <- thickness_sigma[2,3]
+# variability in thickness explained by between-participant variability
+sigma_0^2 / (sigma_0^2 + sigma_y^2)
+# variability in thickness explained by within-participant variability
+sigma_y^2 / (sigma_0^2 + sigma_y^2)
+
+# trends for all participants in sample
+ggplot(thickness_sample, aes(x = age, y = smri_thick_cdk_mean, group = src_subject_id)) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5, alpha = 0.1)
+  
+```
+
+```{r}
+#| label: hierarchical-model-varying-intercepts
+
+# specify prior
+thickness_model_2 <- stan_glmer(
+  # formula
+  smri_thick_cdk_mean ~ age + (age | src_subject_id),
+  # data and family for prior
+  data = thickness_sample, family = gaussian,
+  # prior distribution for centered global intercept
+  # across all participants
+  prior_intercept = normal(mu_thick_all, sd_thick_all),
+  # prior for beta_1 (rate of decrease for average participant)
+  # educated guess at parameters
+  prior = normal(-0.01, 0.00126),
+  # prior for sigma_0 (variability between participants)
+  prior_aux = exponential(1, autoscale = TRUE),
+  # prior for sigma_y (degree to which cortical thickness fluctuates from regression trend)
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, iter = 10000, seed = 84735,  adapt_delta = 0.99999
+)
+
+# prior model specifications
+prior_summary(thickness_model_2)
+
+# summary of global regression parameters
+tidy(thickness_model_2, effects = "fixed", conf.int = TRUE)
+
+# get MCMC chains for participant-specific intercepts and slopes
+participant_chains_2 <- thickness_model_2 |>
+  # grabs chains for all participant-specific parameters
+  spread_draws(`(Intercept)`, b[term, src_subject_id], `age`) |>
+  # creates separate columns for each of the chains for b_0j and b_1j
+  pivot_wider(names_from = term, names_glue = "b_{term}", values_from = b) |>
+  # obtains participant-specific intercepts and coefficients
+  mutate(participant_intercept = `(Intercept)` + `b_(Intercept)`,
+         participant_age = age + b_age)
+
+# posterior medians for participant-specific models
+participant_summary_2 <- participant_chains_2 |>
+  group_by(src_subject_id) |>
+  summarize(participant_intercept = median(participant_intercept),
+            participant_age = median(participant_age))
+
+# plot posterior models for all participants
+ggplot(thickness_sample, aes(y = smri_thick_cdk_mean, x = age)) +
+  geom_line(alpha = 0) +
+  geom_abline(data = participant_summary_2, color = "gray",
+              aes(intercept = participant_intercept, slope = participant_age)) +
+  theme_minimal()
+
+# posterior trends in within- and between-group variability
+tidy(thickness_model_2, effects = "ran_pars")
+```
+
+```{r}
+#| label: hierarchical-model-comparison
+
+# posterior predictive checks
+pp_check(thickness_model_1) +
+  labs(x = "mean cortical thickness", title = "thickness model 1")
+pp_check(thickness_model_2) +
+  labs(x = "mean cortical thickness", title = "thickness model 2")
+
+# prediction summaries
+set.seed(84735)
+prediction_summary(model = thickness_model_1, data = thickness_sample)
+prediction_summary(model = thickness_model_2, data = thickness_sample)
+
+# calculate ELPD for 2 models
+elpd_hierarchical_1 <- loo(thickness_model_1)
+elpd_hierarchical_2 <- loo(thickness_model_2)
+
+# compare elpd
+loo_compare(elpd_hierarchical_1, elpd_hierarchical_2)
+
+# elpd for model 2 is lower than model 1
+# model 1 is better
+```
+```{r}
+thickness_sample |>
+  ggplot(aes(x = interview_age, y = smri_thick_cdk_mean, group = src_subject_id)) +
+  geom_line(alpha = 0.5)
+```
+
+
+
